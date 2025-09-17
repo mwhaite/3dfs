@@ -8,7 +8,7 @@ from three_dfs.data.tags import TagStore
 
 
 def test_tag_store_add_remove_rename(tmp_path: Path) -> None:
-    store_path = tmp_path / "tags.json"
+    store_path = tmp_path / "assets.sqlite3"
     store = TagStore(store_path)
 
     assert store.tags_for("item-1") == []
@@ -32,14 +32,14 @@ def test_tag_store_add_remove_rename(tmp_path: Path) -> None:
 
 
 def test_tag_store_persistence_roundtrip(tmp_path: Path) -> None:
-    store_path = tmp_path / "tags.json"
+    store_path = tmp_path / "assets.sqlite3"
     store = TagStore(store_path)
 
     store.add_tag("foo", "Bar")
     store.add_tag("foo", "Baz")
     store.add_tag("qux", "Bar")
 
-    # A new instance pointing to the same file should read the state back.
+    # A new instance pointing to the same database should read the state back.
     reloaded = TagStore(store_path)
     assert reloaded.tags_for("foo") == ["Bar", "Baz"]
     assert reloaded.search("bar") == {"foo": ["Bar"], "qux": ["Bar"]}
