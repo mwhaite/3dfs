@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Final
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .data import TagStore
-from .ui import TagSidebar
+from .ui import PreviewPane, TagSidebar
 
 WINDOW_TITLE: Final[str] = "3dfs"
 
@@ -37,9 +37,8 @@ class MainWindow(QMainWindow):
         self._repository_list.setObjectName("repositoryList")
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
 
-        self._preview_label = QLabel("Select an item to preview", self)
-        self._preview_label.setObjectName("previewLabel")
-        self._preview_label.setAlignment(Qt.AlignCenter)
+        self._preview_pane = PreviewPane(self, repository_root=Path.cwd())
+        self._preview_pane.setObjectName("previewPane")
 
         self._build_layout()
         self._connect_signals()
@@ -56,7 +55,7 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal, central_widget)
         splitter.addWidget(self._repository_list)
-        splitter.addWidget(self._preview_label)
+        splitter.addWidget(self._preview_pane)
         splitter.addWidget(self._tag_sidebar)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
@@ -98,13 +97,13 @@ class MainWindow(QMainWindow):
         del previous  # unused but part of the Qt signal signature
 
         if current is None:
-            self._preview_label.setText("Select an item to preview")
+            self._preview_pane.clear()
             self._tag_sidebar.set_active_item(None)
             return
 
         item_id = current.data(Qt.UserRole) or current.text()
         item_id = str(item_id)
-        self._preview_label.setText(f"Preview for {current.text()}")
+        self._preview_pane.display_asset(item_id, current.text())
         self._tag_sidebar.set_active_item(item_id)
 
     def _handle_search_request(self, query: str) -> None:
