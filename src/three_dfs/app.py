@@ -7,6 +7,8 @@ from typing import Final
 
 from PySide6.QtWidgets import QApplication, QMainWindow
 
+from .ui import RepositoryBrowser
+
 WINDOW_TITLE: Final[str] = "3dfs"
 
 
@@ -16,6 +18,22 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(WINDOW_TITLE)
+
+        self._browser = RepositoryBrowser(parent=self)
+        self.setCentralWidget(self._browser)
+
+        self._browser.directoryChanged.connect(self._on_directory_changed)
+        self._browser.entrySelected.connect(self._on_entry_selected)
+        self._browser.entryActivated.connect(self._on_entry_activated)
+
+    def _on_directory_changed(self, path: str) -> None:
+        self.statusBar().showMessage(f"Directory: {path}")
+
+    def _on_entry_selected(self, path: str) -> None:
+        self.statusBar().showMessage(f"Selected: {path}")
+
+    def _on_entry_activated(self, path: str) -> None:
+        self.statusBar().showMessage(f"Activated: {path}")
 
 
 def main() -> int:
