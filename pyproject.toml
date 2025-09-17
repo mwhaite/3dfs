@@ -20,12 +20,19 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Topic :: Scientific/Engineering :: Information Analysis",
 ]
+dependencies = [
+  "PySide6>=6.7",
+  "Pillow>=10.3",
+]
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "tests", "docs", "README.md"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/three_dfs"]
+
+[project.scripts]
+three-dfs = "three_dfs.app:main"
 
 [tool.hatch.envs.default]
 dependencies = [
