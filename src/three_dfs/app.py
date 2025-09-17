@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .data import TagStore
+from .storage import AssetService
 from .ui import TagSidebar
 
 WINDOW_TITLE: Final[str] = "3dfs"
@@ -31,7 +32,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(WINDOW_TITLE)
 
-        self._tag_store = TagStore()
+        self._asset_service = AssetService()
+        self._tag_store = TagStore(service=self._asset_service)
         self._tag_sidebar = TagSidebar(self._tag_store)
         self._repository_list = QListWidget(self)
         self._repository_list.setObjectName("repositoryList")
@@ -71,20 +73,17 @@ class MainWindow(QMainWindow):
         self._tag_sidebar.tagsChanged.connect(self._handle_tags_changed)
 
     def _populate_repository(self) -> None:
-        """Populate the mock repository view with placeholder entries."""
+        """Populate the repository view with persisted asset entries."""
 
-        sample_items = [
-            ("docs/overview.md", "Project overview"),
-            ("assets/textures/terrain.png", "Terrain texture"),
-            ("assets/models/ship.fbx", "Spaceship model"),
-            ("scripts/build.py", "Build automation script"),
-            ("notes/ideas.txt", "Concept notes"),
-        ]
+        self._repository_list.clear()
+        assets = self._asset_service.bootstrap_demo_data()
 
-        for item_id, label in sample_items:
-            widget_item = QListWidgetItem(label)
-            widget_item.setData(Qt.UserRole, item_id)
-            self._repository_list.addItem(widget_item)
+        for asset in assets:
+            display_label = asset.label or asset.path
+            item = QListWidgetItem(display_label)
+            item.setData(Qt.UserRole, asset.path)
+            item.setToolTip(asset.path)
+            self._repository_list.addItem(item)
 
         if self._repository_list.count():
             self._repository_list.setCurrentRow(0)
@@ -104,7 +103,13 @@ class MainWindow(QMainWindow):
 
         item_id = current.data(Qt.UserRole) or current.text()
         item_id = str(item_id)
-        self._preview_label.setText(f"Preview for {current.text()}")
+        asset = self._asset_service.get_asset_by_path(item_id)
+
+        if asset and asset.metadata.get("description"):
+            self._preview_label.setText(str(asset.metadata["description"]))
+        else:
+            self._preview_label.setText(f"Preview for {current.text()}")
+
         self._tag_sidebar.set_active_item(item_id)
 
     def _handle_search_request(self, query: str) -> None:
@@ -158,5 +163,3 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
