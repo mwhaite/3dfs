@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .preview_pane import PreviewPane
 from .tag_sidebar import TagSidebar
 
-__all__ = ["TagSidebar"]
+__all__ = ["PreviewPane", "TagSidebar"]
