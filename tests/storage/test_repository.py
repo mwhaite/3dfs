@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
@@ -21,7 +23,8 @@ def test_sqlite_storage_initializes_schema(tmp_path: Path) -> None:
             ).fetchall()
         }
 
-    assert {"assets", "asset_tags"}.issubset(tables)
+    assert {"assets", "tags", "asset_tag_links"}.issubset(tables)
+    assert "asset_tags" not in tables
 
 
 def test_asset_repository_persists_records(tmp_path: Path) -> None:
@@ -37,6 +40,7 @@ def test_asset_repository_persists_records(tmp_path: Path) -> None:
 
     assert created.id > 0
     assert created.tags == ["model", "vehicle"]
+    assert repository.all_tags() == ["model", "vehicle"]
 
     fetched = repository.get_asset_by_path("assets/models/ship.fbx")
     assert fetched is not None
@@ -48,17 +52,76 @@ def test_asset_repository_persists_records(tmp_path: Path) -> None:
     refreshed = repository.get_asset(created.id)
     assert refreshed is not None
     assert refreshed.tags == ["Featured", "vehicle"]
+    assert repository.all_tags() == ["Featured", "vehicle"]
 
     repository.set_tags(created.id, ["alpha", "beta"])
     updated = repository.get_asset(created.id)
     assert updated is not None
     assert updated.tags == ["alpha", "beta"]
+    assert repository.all_tags() == ["alpha", "beta"]
 
     listing = repository.list_assets()
     assert [asset.path for asset in listing] == ["assets/models/ship.fbx"]
 
     search_results = repository.search_tags("alp")
     assert search_results == {"assets/models/ship.fbx": ["alpha"]}
+
+
+def test_sqlite_storage_migrates_legacy_tag_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy.sqlite3"
+    now = datetime.now(UTC).isoformat()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                label TEXT NOT NULL,
+                metadata TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE asset_tags (
+                asset_id INTEGER NOT NULL,
+                tag TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO assets(id, path, label, metadata, created_at, updated_at)
+            VALUES(1, ?, ?, ?, ?, ?)
+            """,
+            ("docs/legacy.txt", "Legacy", "{}", now, now),
+        )
+        connection.executemany(
+            "INSERT INTO asset_tags(asset_id, tag) VALUES(?, ?)",
+            [(1, "alpha"), (1, "beta")],
+        )
+
+    storage = SQLiteStorage(db_path)
+    repository = AssetRepository(storage)
+
+    asset = repository.get_asset(1)
+    assert asset is not None
+    assert asset.tags == ["alpha", "beta"]
+    assert repository.all_tags() == ["alpha", "beta"]
+
+    with storage.connect() as connection:
+        tables = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+
+    assert {"assets", "tags", "asset_tag_links"}.issubset(tables)
+    assert "asset_tags" not in tables
 
 
 def test_asset_service_bootstrap_demo_data(tmp_path: Path) -> None:

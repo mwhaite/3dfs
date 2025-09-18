@@ -56,6 +56,7 @@ class TagSidebar(QWidget):
         self._store = store or TagStore()
         self._active_item: str | None = None
         self._all_tags_for_item: list[str] = []
+        self._known_tags: list[str] = []
 
         self._title_label = QLabel("Tags", self)
         self._title_label.setObjectName("tagSidebarTitle")
@@ -83,6 +84,7 @@ class TagSidebar(QWidget):
 
         self._build_layout()
         self._update_ui_state()
+        self._refresh_available_tags()
 
     # ------------------------------------------------------------------
     # Qt API surface
@@ -153,7 +155,21 @@ class TagSidebar(QWidget):
         if self._active_item is None:
             return
 
-        new_tag, accepted = QInputDialog.getText(self, "Create tag", "Tag name:")
+        suggestions = [
+            tag for tag in self._known_tags if tag not in self._all_tags_for_item
+        ]
+
+        if suggestions:
+            new_tag, accepted = QInputDialog.getItem(
+                self,
+                "Create tag",
+                "Tag name:",
+                suggestions,
+                0,
+                True,
+            )
+        else:
+            new_tag, accepted = QInputDialog.getText(self, "Create tag", "Tag name:")
         if not accepted:
             return
 
@@ -241,6 +257,7 @@ class TagSidebar(QWidget):
             self._active_label.setText(f"Tags for {self._active_item}")
             self._all_tags_for_item = self._store.tags_for(self._active_item)
 
+        self._refresh_available_tags()
         self._refresh_visible_tags()
         self._update_ui_state()
 
@@ -258,6 +275,9 @@ class TagSidebar(QWidget):
         for tag in tags:
             self._tag_list.addItem(tag)
 
+    def _refresh_available_tags(self) -> None:
+        self._known_tags = self._store.all_tags()
+
     def _update_ui_state(self) -> None:
         has_item = self._active_item is not None
         has_selection = self._tag_list.currentItem() is not None
@@ -271,5 +291,6 @@ class TagSidebar(QWidget):
         if self._active_item is None:
             return
 
+        self._refresh_available_tags()
         tags = self._store.tags_for(self._active_item)
         self.tagsChanged.emit(self._active_item, tags)
