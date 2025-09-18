@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 DEFAULT_DB_FILENAME = "assets.sqlite3"
 DEFAULT_DB_PATH = Path.home() / ".3dfs" / DEFAULT_DB_FILENAME
@@ -47,7 +46,7 @@ class SQLiteStorage:
 
         if str(raw_path) == ":memory:":
             self._database = ":memory:"
-            self._path: Optional[Path] = None
+            self._path: Path | None = None
         else:
             actual_path = Path(raw_path).expanduser()
             actual_path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,7 +59,7 @@ class SQLiteStorage:
     # Public API
     # ------------------------------------------------------------------
     @property
-    def path(self) -> Optional[Path]:
+    def path(self) -> Path | None:
         """Return the filesystem location for the database if persisted."""
 
         return self._path
@@ -108,9 +107,7 @@ class SQLiteStorage:
             # The database already uses the new schema.
             return
 
-        rows = connection.execute(
-            "SELECT asset_id, tag FROM asset_tags"
-        ).fetchall()
+        rows = connection.execute("SELECT asset_id, tag FROM asset_tags").fetchall()
 
         def ensure_tag_id(tag_name: str) -> int:
             existing = connection.execute(

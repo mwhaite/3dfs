@@ -80,3 +80,29 @@ print(f"Plugin scaffold written to {plugin_path}")
 The generated module registers the plugin automatically; developers only
 need to fill in the TODO hooks before packaging the plugin via an entry
 point.
+=======
+The importer can fetch remote assets through pluggable backends. Plugins
+implement the :class:`three_dfs.import_plugins.ImportPlugin` protocol and
+register themselves either programmatically via
+``three_dfs.import_plugins.register_plugin`` or by exposing an entry point in
+the ``three_dfs.import_plugins`` group. When the importer receives an
+identifier that does not resolve to a local file it asks the registered
+plugins if they can handle the source and delegates the download to the
+matching implementation. The returned metadata is merged with the built-in
+fields so remote associations (for example ``remote_source``) are preserved in
+the resulting asset record.
+
+To jump-start development of a new integration you can use the scaffold
+utility:
+
+```python
+from three_dfs.import_plugins import scaffold_plugin
+
+module_path = scaffold_plugin("Sketchfab", "./plugins")
+print(f"Created plugin skeleton at {module_path}")
+```
+
+The generated module contains TODO markers for authentication, scraping, and
+metadata mapping. Fill in those hooks, ensure the plugin returns the fetched
+asset in a supported format, and register it with the global registry.
+
