@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+
 import logging
+
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -14,7 +16,8 @@ from ..thumbnails import (
     ThumbnailManager,
     ThumbnailResult,
 )
-from .repository import AssetRecord, AssetRepository
+
+
 
 __all__ = ["AssetSeed", "AssetService"]
 

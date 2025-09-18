@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from three_dfs.db import (
     Asset,
+    AssetRelationship,
     Attachment,
     AuditLog,
     Base,
@@ -147,3 +148,66 @@ def test_printer_profile_relationship(session):
     assert refreshed_version is not None
     assert refreshed_version.printer_profile is None
     assert refreshed_version.printer_profile_id is None
+
+
+def test_asset_relationship_metadata(session):
+    """Assets capture assembly and related metadata through relationships."""
+
+    gantry = Asset(name="Gantry Assembly")
+    carriage = Asset(name="Carriage Plate")
+    cable_chain = Asset(name="Cable Chain")
+
+    gantry.outgoing_relationships.append(
+        AssetRelationship(
+            target_asset=carriage,
+            relationship_type="assembly",
+            context={"location": "X-axis"},
+        )
+    )
+    carriage.outgoing_relationships.append(
+        AssetRelationship(
+            target_asset=cable_chain,
+            relationship_type="related",
+        )
+    )
+
+    session.add_all([gantry, carriage, cable_chain])
+    session.commit()
+
+    stored_gantry = session.get(Asset, gantry.id)
+    assert stored_gantry is not None
+    assert len(stored_gantry.outgoing_relationships) == 1
+    assembly_link = stored_gantry.outgoing_relationships[0]
+    assert assembly_link.target_asset.name == "Carriage Plate"
+    assert assembly_link.relationship_type == "assembly"
+    assert assembly_link.context == {"location": "X-axis"}
+
+    stored_carriage = session.get(Asset, carriage.id)
+    assert stored_carriage is not None
+    parent_sources = {
+        rel.source_asset.name for rel in stored_carriage.incoming_relationships
+    }
+    assert parent_sources == {"Gantry Assembly"}
+    related_link = stored_carriage.outgoing_relationships[0]
+    assert related_link.relationship_type == "related"
+    assert related_link.target_asset.name == "Cable Chain"
+
+    with pytest.raises(IntegrityError):
+        stored_gantry.outgoing_relationships.append(
+            AssetRelationship(
+                target_asset=stored_carriage,
+                relationship_type="assembly",
+            )
+        )
+        session.flush()
+    session.rollback()
+
+    stored_gantry = session.get(Asset, gantry.id)
+    assert stored_gantry is not None
+    session.delete(stored_gantry)
+    session.commit()
+    session.expire_all()
+
+    refreshed_carriage = session.get(Asset, carriage.id)
+    assert refreshed_carriage is not None
+    assert refreshed_carriage.incoming_relationships == []
