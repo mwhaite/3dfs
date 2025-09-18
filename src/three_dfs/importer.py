@@ -17,7 +17,11 @@ except ImportError:  # pragma: no cover - dependency guaranteed in production
     trimesh = None  # type: ignore[assignment]
 
 
+from .import_plugins import get_plugin_for
+
+
 from .import_plugins import ImportPlugin, iter_plugins
+
 from .storage import AssetService
 
 if TYPE_CHECKING:
@@ -48,6 +52,10 @@ DEFAULT_STORAGE_ROOT: Final[Path] = Path.home() / ".3dfs" / "assets" / "imports"
 """Default directory where imported assets are stored."""
 
 
+_WINDOWS_DRIVE_PATTERN = re.compile(r"^[a-zA-Z]:")
+_SANITIZE_FILENAME_PATTERN = re.compile(r"[^a-zA-Z0-9._-]+")
+
+
 class AssetImportError(RuntimeError):
     """Base exception raised when an asset cannot be imported."""
 
@@ -62,13 +70,18 @@ def import_asset(
     service: AssetService | None = None,
     storage_root: Path | None = None,
 ) -> AssetRecord:
-    """Import the asset located at *path* into managed storage.
+    """Import the asset referenced by *path* into managed storage.
 
     Parameters
     ----------
     path:
+
+        Either a filesystem path or a remote identifier understood by an
+        import plugin.
+
         The filesystem path or remote identifier of the asset to import. Remote
         sources are handled by registered :mod:`three_dfs.import_plugins`.
+
     service:
         Optional :class:`~three_dfs.storage.AssetService` used to register the
         asset. A new service instance is created when omitted.
@@ -84,10 +97,150 @@ def import_asset(
     Raises
     ------
     FileNotFoundError
-        If *path* does not exist on disk.
+        If *path* references a local file that does not exist.
     AssetImportError
-        If *path* is not a file or has an unsupported extension.
+        If the source cannot be imported or resolves to an unsupported format.
     """
+
+
+    identifier_str = str(path)
+    looks_remote = _looks_like_remote_identifier(identifier_str)
+    attempted_local_resolution = isinstance(path, Path) or not looks_remote
+
+    source: Path | None = None
+    candidate: Path | None = None
+
+    if isinstance(path, Path):
+        candidate = path.expanduser()
+    elif attempted_local_resolution:
+        candidate = Path(identifier_str).expanduser()
+
+    if candidate is not None and attempted_local_resolution:
+        try:
+            resolved = candidate.resolve(strict=True)
+        except (FileNotFoundError, OSError):
+            resolved = None
+        else:
+            if not resolved.is_file():
+                raise AssetImportError(f"Asset {resolved!s} is not a file")
+            source = resolved
+
+    managed_root = Path(storage_root or DEFAULT_STORAGE_ROOT).expanduser()
+
+    plugin_metadata: dict[str, Any] = {}
+    plugin_identifier: str | None = None
+    plugin_label: str | None = None
+
+    if source is not None:
+        extension = source.suffix.lower()
+        if extension not in SUPPORTED_EXTENSIONS:
+            raise UnsupportedAssetTypeError(
+                f"Unsupported asset format '{extension or 'unknown'}'"
+            )
+
+        managed_root.mkdir(parents=True, exist_ok=True)
+        destination = _allocate_destination(managed_root, source.name)
+        shutil.copy2(source, destination)
+        label = source.stem
+        original_reference = str(source)
+    else:
+        plugin = get_plugin_for(identifier_str)
+        if plugin is None:
+            if attempted_local_resolution:
+                raise FileNotFoundError(f"Asset {identifier_str} does not exist")
+            raise AssetImportError(f"No import plugin available for {identifier_str}")
+
+        managed_root.mkdir(parents=True, exist_ok=True)
+        destination = _allocate_destination(
+            managed_root, _derive_destination_name(identifier_str)
+        )
+        try:
+            plugin_metadata_raw = plugin.fetch(identifier_str, destination)
+        except Exception as exc:
+            destination.unlink(missing_ok=True)
+            raise AssetImportError(
+                "Import plugin "
+                f"{plugin.__class__.__name__} failed to fetch {identifier_str}"
+            ) from exc
+
+        try:
+            plugin_metadata = dict(plugin_metadata_raw or {})
+        except TypeError as exc:
+            destination.unlink(missing_ok=True)
+            raise AssetImportError(
+                f"Import plugin {plugin.__class__.__name__} returned invalid metadata"
+            ) from exc
+
+        if not destination.exists():
+            raise AssetImportError(
+                "Import plugin "
+                f"{plugin.__class__.__name__} did not produce a file for "
+                f"{identifier_str}"
+            )
+
+        filename_override = plugin_metadata.get("filename")
+        if filename_override:
+            sanitized = Path(str(filename_override)).name
+            if sanitized and sanitized != destination.name:
+                new_destination = _allocate_destination(managed_root, sanitized)
+                destination.rename(new_destination)
+                destination = new_destination
+
+        extension = destination.suffix.lower()
+        extension_hint = plugin_metadata.get("extension")
+        if (not extension or extension not in SUPPORTED_EXTENSIONS) and extension_hint:
+            normalized = f".{str(extension_hint).lstrip('.').lower()}"
+            if normalized:
+                desired_name = destination.with_suffix(normalized).name
+                new_destination = _allocate_destination(managed_root, desired_name)
+                destination.rename(new_destination)
+                destination = new_destination
+                extension = destination.suffix.lower()
+
+        if extension not in SUPPORTED_EXTENSIONS:
+            destination.unlink(missing_ok=True)
+            raise UnsupportedAssetTypeError(
+                "Unsupported asset format "
+                f"'{extension or 'unknown'}' from import plugin"
+            )
+
+        plugin_label_value = plugin_metadata.get("label")
+        if plugin_label_value is not None:
+            plugin_label = str(plugin_label_value)
+
+        plugin_identifier = (
+            f"{plugin.__class__.__module__}.{plugin.__class__.__qualname__}"
+        )
+        original_reference = identifier_str
+
+    imported_at = datetime.now(UTC).isoformat()
+    metadata = {
+        "source": identifier_str,
+        "original_path": original_reference,
+        "managed_path": str(destination),
+        "extension": extension.lstrip(".").upper(),
+        "size": destination.stat().st_size,
+        "imported_at": imported_at,
+    }
+
+    if plugin_identifier:
+        for reserved_key in {
+            "filename",
+            "extension",
+            "managed_path",
+            "original_path",
+            "imported_at",
+            "size",
+            "source",
+        }:
+            plugin_metadata.pop(reserved_key, None)
+
+        metadata.update(plugin_metadata)
+        metadata.setdefault("remote_source", identifier_str)
+        metadata["import_plugin"] = plugin_identifier
+        label = plugin_label or Path(destination).stem
+
+    metadata.update(_extract_format_metadata(destination, extension))
 
     candidate = Path(path).expanduser()
     imported_at = datetime.now(UTC).isoformat()
@@ -130,6 +283,7 @@ def import_asset(
         destination = _allocate_destination(
             managed_root, _derive_remote_filename(str(path))
         )
+
 
         try:
             plugin_metadata = dict(plugin.fetch(str(path), destination) or {})
@@ -194,7 +348,11 @@ def import_asset(
     asset_service = service or _default_asset_service()
     try:
         record = asset_service.create_asset(
+
+            destination.as_posix(),
+=======
             final_path.as_posix(),
+
             label=label,
             metadata=metadata,
         )
@@ -205,12 +363,53 @@ def import_asset(
     return record
 
 
+
+def _looks_like_remote_identifier(value: str) -> bool:
+    """Return ``True`` when *value* appears to reference a remote resource."""
+
+    parsed = urlparse(value)
+    if not parsed.scheme:
+        return False
+
+    if parsed.scheme == "file":
+        return False
+
+    if len(parsed.scheme) == 1 and _WINDOWS_DRIVE_PATTERN.match(value):
+        return False
+
+    return True
+
+
+def _derive_destination_name(source: str) -> str:
+    """Return a safe filename for the managed copy of *source*."""
+
+    parsed = urlparse(source)
+    if parsed.scheme:
+        candidate = Path(parsed.path or "").name
+    else:
+        candidate = Path(source).name
+
+    if not candidate:
+        candidate = _SANITIZE_FILENAME_PATTERN.sub("_", source).strip("_")
+
+    candidate = candidate or "remote_asset"
+
+    sanitized = Path(candidate).name
+    if not sanitized:
+        sanitized = "remote_asset"
+
+    if not Path(sanitized).suffix:
+        sanitized = f"{sanitized}.tmp"
+
+    return sanitized
+
 def _default_asset_service() -> AssetService:
     """Return a lazily imported :class:`AssetService` instance."""
 
     from .storage import AssetService as _AssetService
 
     return _AssetService()
+
 
 
 def _allocate_destination(storage_root: Path, filename: str) -> Path:

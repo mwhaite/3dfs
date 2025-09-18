@@ -40,6 +40,47 @@ code will be layered onto this foundation in subsequent milestones.
 
 ## Import plugins
 
+The asset importer supports remote sources via a lightweight plugin
+interface. Plugins implement the ``ImportPlugin`` protocol located in
+``three_dfs.import_plugins`` and register themselves either by calling
+``three_dfs.import_plugins.register_plugin`` or by exposing an entry
+point in the ``three_dfs.import_plugins`` group. Each plugin provides two
+methods:
+
+* ``can_handle(source: str) -> bool`` identifies whether a plugin can
+  process the requested identifier.
+* ``fetch(source: str, destination: Path) -> dict[str, Any]`` downloads
+  the asset into the managed ``destination`` path and returns metadata.
+
+When ``three_dfs.importer.import_asset`` receives a string that does not
+resolve to a local file, it evaluates the registered plugins. The first
+plugin whose ``can_handle`` method returns ``True`` is invoked to obtain
+the managed asset. Plugins can provide additional metadata such as the
+remote URL, author attribution, or authentication details; the importer
+merges this metadata into the stored asset record and automatically
+records the plugin identifier. Plugins should write their downloaded
+asset to the supplied destination path and may include an ``extension``
+field in the returned metadata when the original identifier does not
+include a file suffix.
+
+### Plugin scaffolding
+
+The ``three_dfs.import_plugins.scaffold_plugin`` helper generates a
+starter module with placeholders for authentication, scraping, and
+metadata mapping logic:
+
+```python
+from pathlib import Path
+from three_dfs.import_plugins import scaffold_plugin
+
+plugin_path = scaffold_plugin("Sketchfab", Path("./plugins"))
+print(f"Plugin scaffold written to {plugin_path}")
+```
+
+The generated module registers the plugin automatically; developers only
+need to fill in the TODO hooks before packaging the plugin via an entry
+point.
+=======
 The importer can fetch remote assets through pluggable backends. Plugins
 implement the :class:`three_dfs.import_plugins.ImportPlugin` protocol and
 register themselves either programmatically via
@@ -64,3 +105,4 @@ print(f"Created plugin skeleton at {module_path}")
 The generated module contains TODO markers for authentication, scraping, and
 metadata mapping. Fill in those hooks, ensure the plugin returns the fetched
 asset in a supported format, and register it with the global registry.
+
