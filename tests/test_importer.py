@@ -37,6 +37,20 @@ def sample_stl_path() -> Path:
     return Path(__file__).parent / "fixtures" / "sample_mesh.stl"
 
 
+@pytest.fixture()
+def sample_obj_path() -> Path:
+    """Return the path to the bundled sample OBJ asset."""
+
+    return Path(__file__).parent / "fixtures" / "sample_mesh.obj"
+
+
+@pytest.fixture()
+def sample_step_path() -> Path:
+    """Return the path to the bundled sample STEP asset."""
+
+    return Path(__file__).parent / "fixtures" / "sample_block.step"
+
+
 def test_importer_registers_supported_asset(
     asset_service: AssetService,
     managed_storage_root: Path,
@@ -65,6 +79,68 @@ def test_importer_registers_supported_asset(
 
     stored_files = list(managed_storage_root.iterdir())
     assert stored_files == [managed_path]
+
+
+def test_importer_extracts_metadata_from_stl(
+    asset_service: AssetService,
+    managed_storage_root: Path,
+    sample_stl_path: Path,
+) -> None:
+    """Importer should populate mesh metadata for STL files."""
+
+    record = import_asset(
+        sample_stl_path,
+        service=asset_service,
+        storage_root=managed_storage_root,
+    )
+
+    metadata = record.metadata
+    assert metadata["vertex_count"] == 3
+    assert metadata["face_count"] == 1
+    assert metadata["bounding_box_min"] == [0.0, 0.0, 0.0]
+    assert metadata["bounding_box_max"] == [1.0, 1.0, 0.0]
+    assert metadata["units"] == "unspecified"
+
+
+def test_importer_extracts_metadata_from_obj(
+    asset_service: AssetService,
+    managed_storage_root: Path,
+    sample_obj_path: Path,
+) -> None:
+    """Importer should populate mesh metadata for OBJ files."""
+
+    record = import_asset(
+        sample_obj_path,
+        service=asset_service,
+        storage_root=managed_storage_root,
+    )
+
+    metadata = record.metadata
+    assert metadata["vertex_count"] == 4
+    assert metadata["face_count"] == 2
+    assert metadata["bounding_box_min"] == [-1.0, -1.0, 0.0]
+    assert metadata["bounding_box_max"] == [1.0, 1.0, 0.0]
+    assert metadata["units"] == "unspecified"
+
+
+def test_importer_extracts_metadata_from_step(
+    asset_service: AssetService,
+    managed_storage_root: Path,
+    sample_step_path: Path,
+) -> None:
+    """Importer should capture bounding boxes and units from STEP files."""
+
+    record = import_asset(
+        sample_step_path,
+        service=asset_service,
+        storage_root=managed_storage_root,
+    )
+
+    metadata = record.metadata
+    assert metadata["vertex_count"] == 4
+    assert metadata["bounding_box_min"] == [0.0, 0.0, 0.0]
+    assert metadata["bounding_box_max"] == [2.0, 3.0, 4.0]
+    assert metadata["units"] == "millimetre"
 
 
 def test_importer_rejects_unsupported_extension(

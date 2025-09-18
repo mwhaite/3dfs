@@ -1,0 +1,14 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('Simple block'),'2;1');
+FILE_NAME('sample_block.step','2024-01-01T00:00:00',('Example'),('Example'),'Example','Example','Example');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN_CC2'));
+ENDSEC;
+DATA;
+#10 = CARTESIAN_POINT('',(0.,0.,0.));
+#11 = CARTESIAN_POINT('',(2.,0.,0.));
+#12 = CARTESIAN_POINT('',(0.,3.,0.));
+#13 = CARTESIAN_POINT('',(0.,0.,4.));
+#20 = SI_UNIT(.MILLI.,.METRE.);
+ENDSEC;
+END-ISO-10303-21;
