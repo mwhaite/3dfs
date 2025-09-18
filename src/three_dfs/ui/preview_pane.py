@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
@@ -24,6 +24,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ..thumbnails import (
+    DEFAULT_THUMBNAIL_SIZE,
+    ThumbnailCache,
+    ThumbnailGenerationError,
+    ThumbnailResult,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - import for typing only
+    from ..storage import AssetRecord, AssetService
 
 __all__ = ["PreviewPane"]
 
@@ -68,6 +78,8 @@ class PreviewOutcome:
     metadata: list[tuple[str, str]]
     thumbnail_bytes: bytes | None = None
     thumbnail_message: str | None = None
+    thumbnail_info: dict[str, Any] | None = None
+    asset_record: AssetRecord | None = None
 
 
 class PreviewWorkerSignals(QObject):
@@ -80,15 +92,37 @@ class PreviewWorkerSignals(QObject):
 class PreviewWorker(QRunnable):
     """Background task that extracts thumbnail and metadata for a file."""
 
-    def __init__(self, token: int, path: Path) -> None:
+    def __init__(
+        self,
+        token: int,
+        path: Path,
+        *,
+        asset_metadata: Mapping[str, Any] | None = None,
+        asset_service: AssetService | None = None,
+        asset_record: AssetRecord | None = None,
+        thumbnail_cache: ThumbnailCache | None = None,
+        size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+    ) -> None:
         super().__init__()
         self._token = token
         self._path = path
+        self._metadata = dict(asset_metadata) if asset_metadata else {}
+        self._asset_service = asset_service
+        self._asset_record = asset_record
+        self._thumbnail_cache = thumbnail_cache
+        self._size = size
         self.signals = PreviewWorkerSignals()
 
     def run(self) -> None:  # pragma: no cover - exercised indirectly via signals
         try:
-            outcome = _build_preview_outcome(self._path)
+            outcome = _build_preview_outcome(
+                self._path,
+                metadata=self._metadata,
+                asset_service=self._asset_service,
+                asset_record=self._asset_record,
+                thumbnail_cache=self._thumbnail_cache,
+                size=self._size,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to generate preview for %s", self._path)
             message = str(exc) or exc.__class__.__name__
@@ -103,11 +137,16 @@ class PreviewPane(QWidget):
     def __init__(
         self,
         base_path: str | Path | None = None,
+        *,
+        asset_service: AssetService | None = None,
+        thumbnail_cache: ThumbnailCache | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._base_path = Path(base_path or Path.cwd()).expanduser().resolve()
         self._thread_pool = QThreadPool.globalInstance()
+        self._asset_service = asset_service
+        self._thumbnail_cache = thumbnail_cache
 
         self._current_task_id: int | None = None
         self._task_counter = 0
@@ -116,6 +155,7 @@ class PreviewPane(QWidget):
         self._current_pixmap: QPixmap | None = None
         self._current_thumbnail_message: str | None = None
         self._asset_metadata: dict[str, Any] = {}
+        self._asset_record: AssetRecord | None = None
         self._workers: dict[int, PreviewWorker] = {}
 
         self._title_label = QLabel("Preview", self)
@@ -195,6 +235,7 @@ class PreviewPane(QWidget):
         self._current_pixmap = None
         self._current_thumbnail_message = None
         self._asset_metadata.clear()
+        self._asset_record = None
         self._title_label.setText("Preview")
         self._path_label.clear()
         self._description_label.clear()
@@ -209,6 +250,7 @@ class PreviewPane(QWidget):
         *,
         label: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        asset_record: AssetRecord | None = None,
     ) -> None:
         """Display the asset located at *path* in the preview pane."""
 
@@ -216,7 +258,10 @@ class PreviewPane(QWidget):
             self.clear()
             return
 
+        self._asset_record = asset_record
         self._asset_metadata = dict(metadata) if metadata else {}
+        if not self._asset_metadata and asset_record is not None:
+            self._asset_metadata = dict(asset_record.metadata)
         self._current_raw_path = path
         absolute_path = self._resolve_path(path)
         self._current_absolute_path = absolute_path
@@ -262,7 +307,20 @@ class PreviewPane(QWidget):
         task_id = self._task_counter
         self._current_task_id = task_id
 
-        worker = PreviewWorker(task_id, absolute_path)
+        cache = self._thumbnail_cache
+        if cache is None and self._asset_service is None:
+            cache = ThumbnailCache()
+            self._thumbnail_cache = cache
+
+        worker = PreviewWorker(
+            task_id,
+            absolute_path,
+            asset_metadata=self._asset_metadata,
+            asset_service=self._asset_service,
+            asset_record=self._asset_record,
+            thumbnail_cache=cache,
+            size=DEFAULT_THUMBNAIL_SIZE,
+        )
         worker.signals.result.connect(self._handle_worker_result)
         worker.signals.error.connect(self._handle_worker_error)
         self._workers[task_id] = worker
@@ -308,6 +366,12 @@ class PreviewPane(QWidget):
     def _apply_outcome(self, outcome: PreviewOutcome) -> None:
         self._current_task_id = None
         self._stack.setCurrentWidget(self._preview_container)
+
+        if outcome.asset_record is not None:
+            self._asset_record = outcome.asset_record
+            self._asset_metadata = dict(outcome.asset_record.metadata)
+        elif outcome.thumbnail_info is not None:
+            self._asset_metadata["thumbnail"] = outcome.thumbnail_info
 
         if outcome.thumbnail_bytes:
             pixmap = QPixmap()
@@ -393,7 +457,15 @@ class PreviewPane(QWidget):
 # ----------------------------------------------------------------------
 
 
-def _build_preview_outcome(path: Path) -> PreviewOutcome:
+def _build_preview_outcome(
+    path: Path,
+    *,
+    asset_metadata: Mapping[str, Any] | None = None,
+    asset_service: AssetService | None = None,
+    asset_record: AssetRecord | None = None,
+    thumbnail_cache: ThumbnailCache | None = None,
+    size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+) -> PreviewOutcome:
     if not path.exists():
         raise FileNotFoundError(f"{path} does not exist")
 
@@ -420,13 +492,28 @@ def _build_preview_outcome(path: Path) -> PreviewOutcome:
         )
 
     if suffix in _MODEL_EXTENSIONS:
-        model_metadata, thumbnail_bytes, message = _build_model_preview(path)
+        (
+            model_metadata,
+            thumbnail_bytes,
+            message,
+            thumbnail_info,
+            updated_asset,
+        ) = _build_model_preview(
+            path,
+            asset_metadata=asset_metadata,
+            asset_service=asset_service,
+            asset_record=asset_record,
+            thumbnail_cache=thumbnail_cache,
+            size=size,
+        )
         metadata.extend(model_metadata)
         return PreviewOutcome(
             path=path,
             metadata=metadata,
             thumbnail_bytes=thumbnail_bytes,
             thumbnail_message=message,
+            thumbnail_info=thumbnail_info,
+            asset_record=updated_asset,
         )
 
     metadata.append(("Type", path.suffix or "Unknown"))
@@ -456,7 +543,19 @@ def _build_image_preview(path: Path) -> tuple[list[tuple[str, str]], bytes]:
 
 def _build_model_preview(
     path: Path,
-) -> tuple[list[tuple[str, str]], bytes | None, str | None]:
+    *,
+    asset_metadata: Mapping[str, Any] | None = None,
+    asset_service: AssetService | None = None,
+    asset_record: AssetRecord | None = None,
+    thumbnail_cache: ThumbnailCache | None = None,
+    size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+) -> tuple[
+    list[tuple[str, str]],
+    bytes | None,
+    str | None,
+    dict[str, Any] | None,
+    AssetRecord | None,
+]:
     suffix = path.suffix.lower()
     metadata: list[tuple[str, str]] = [
         ("Type", f"3D Model ({suffix[1:].upper()})" if suffix else "3D Model"),
@@ -468,13 +567,58 @@ def _build_model_preview(
     else:
         metadata.append(("Model Stats", "Not available"))
 
+    thumbnail_result: ThumbnailResult | None = None
+    updated_asset = asset_record
+
+    if asset_service is not None and asset_record is not None:
+        updated_asset, thumbnail_result = asset_service.ensure_thumbnail(
+            asset_record,
+            size=size,
+        )
+    else:
+        cache = thumbnail_cache or ThumbnailCache()
+        existing_info = None
+        if asset_metadata and isinstance(asset_metadata, Mapping):
+            candidate = asset_metadata.get("thumbnail")
+            if isinstance(candidate, Mapping):
+                existing_info = candidate
+        try:
+            thumbnail_result = cache.get_or_render(
+                path,
+                existing_info=existing_info,
+                metadata=asset_metadata,
+                size=size,
+            )
+        except ThumbnailGenerationError:
+            thumbnail_result = None
+
+    if thumbnail_result is not None:
+        message = (
+            "Generated new preview for 3D model."
+            if thumbnail_result.updated
+            else "Loaded cached preview for 3D model."
+        )
+        return (
+            metadata,
+            thumbnail_result.image_bytes,
+            message,
+            thumbnail_result.info,
+            updated_asset,
+        )
+
     try:
         thumbnail_bytes = _create_model_placeholder(suffix)
     except Exception:  # pragma: no cover - extremely unlikely to fail
         logger.exception("Failed to build placeholder thumbnail for %s", path)
-        return metadata, None, "Model thumbnail not available."
+        return metadata, None, "Model thumbnail not available.", None, updated_asset
 
-    return metadata, thumbnail_bytes, "Placeholder preview generated for 3D model."
+    return (
+        metadata,
+        thumbnail_bytes,
+        "Placeholder preview generated for 3D model.",
+        None,
+        updated_asset,
+    )
 
 
 def _extract_model_stats(path: Path) -> list[tuple[str, str]]:

@@ -39,7 +39,11 @@ class MainWindow(QMainWindow):
         self._repository_list.setObjectName("repositoryList")
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
 
-        self._preview_pane = PreviewPane(base_path=Path.cwd(), parent=self)
+        self._preview_pane = PreviewPane(
+            base_path=Path.cwd(),
+            asset_service=self._asset_service,
+            parent=self,
+        )
         self._preview_pane.setObjectName("previewPane")
 
         self._build_layout()
@@ -109,12 +113,14 @@ class MainWindow(QMainWindow):
                 item_id,
                 label=current.text(),
                 metadata=None,
+                asset_record=None,
             )
         else:
             self._preview_pane.set_item(
                 asset.path,
                 label=asset.label,
                 metadata=asset.metadata,
+                asset_record=asset,
             )
 
         self._tag_sidebar.set_active_item(item_id)

@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+
+import logging
+
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .repository import AssetRecord, AssetRepository
+from ..thumbnails import (
+    DEFAULT_THUMBNAIL_SIZE,
+    ThumbnailCache,
+    ThumbnailGenerationError,
+    ThumbnailManager,
+    ThumbnailResult,
+)
+
+
 
 __all__ = ["AssetSeed", "AssetService"]
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +72,15 @@ DEFAULT_ASSET_SEEDS: tuple[AssetSeed, ...] = (
 class AssetService:
     """Coordinate high level operations on :class:`AssetRecord` objects."""
 
-    def __init__(self, repository: AssetRepository | None = None) -> None:
+    def __init__(
+        self,
+        repository: AssetRepository | None = None,
+        *,
+        thumbnail_cache: ThumbnailCache | None = None,
+    ) -> None:
         self._repository = repository or AssetRepository()
+        self._thumbnail_cache = thumbnail_cache
+        self._thumbnail_manager: ThumbnailManager | None = None
 
     # ------------------------------------------------------------------
     # Basic accessors
@@ -188,6 +209,45 @@ class AssetService:
         """Yield ``(path, tags)`` pairs for assets that have tags."""
 
         return self._repository.iter_tagged_assets()
+
+    # ------------------------------------------------------------------
+    # Thumbnail operations
+    # ------------------------------------------------------------------
+    def ensure_thumbnail(
+        self,
+        asset: AssetRecord,
+        *,
+        size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+    ) -> tuple[AssetRecord, ThumbnailResult | None]:
+        """Ensure *asset* has a cached thumbnail returning the result."""
+
+        manager = self._ensure_thumbnail_manager()
+
+        try:
+            result = manager.render_for_asset(asset, size=size)
+        except ThumbnailGenerationError as exc:
+            logger.debug("Unable to generate thumbnail for %s: %s", asset.path, exc)
+            return asset, None
+        except Exception:  # pragma: no cover - defensive safeguard
+            logger.exception(
+                "Unexpected error while generating thumbnail for %s", asset.path
+            )
+            return asset, None
+
+        metadata = dict(asset.metadata)
+        existing = metadata.get("thumbnail")
+        if existing != result.info:
+            metadata["thumbnail"] = result.info
+            updated = self.update_asset(asset.id, metadata=metadata)
+            return updated, result
+
+        return asset, result
+
+    def _ensure_thumbnail_manager(self) -> ThumbnailManager:
+        if self._thumbnail_manager is None:
+            cache = self._thumbnail_cache or ThumbnailCache()
+            self._thumbnail_manager = ThumbnailManager(cache)
+        return self._thumbnail_manager
 
     # ------------------------------------------------------------------
     # Convenience helpers
