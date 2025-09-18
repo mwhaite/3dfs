@@ -140,7 +140,7 @@ SessionLocal = create_session_factory()
 
 
 asset_tag_table = Table(
-    "asset_tags",
+    "asset_tag_links",
     metadata,
     Column("asset_id", ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True),
     Column("tag_id", ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),

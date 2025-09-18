@@ -178,6 +178,7 @@ class AssetRepository:
             if tags is not _MISSING:
                 normalized_tags = self._normalize_tags(tags or [])
                 self._replace_tags(connection, asset_id, normalized_tags)
+                self._prune_unused_tags(connection)
                 if not updates:
                     connection.execute(
                         "UPDATE assets SET updated_at = ? WHERE id = ?",
@@ -199,7 +200,10 @@ class AssetRepository:
                 "DELETE FROM assets WHERE id = ?",
                 (asset_id,),
             )
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+            if deleted:
+                self._prune_unused_tags(connection)
+            return deleted
 
     def delete_asset_by_path(self, path: str) -> bool:
         """Delete an asset matching *path* if present."""
@@ -210,7 +214,10 @@ class AssetRepository:
                 "DELETE FROM assets WHERE path = ?",
                 (normalized_path,),
             )
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+            if deleted:
+                self._prune_unused_tags(connection)
+            return deleted
 
     # ------------------------------------------------------------------
     # Tag operations
@@ -227,6 +234,7 @@ class AssetRepository:
                 "UPDATE assets SET updated_at = ? WHERE id = ?",
                 (now.isoformat(), asset_id),
             )
+            self._prune_unused_tags(connection)
             return list(normalized_tags)
 
     def add_tag(self, asset_id: int, tag: str) -> str | None:
@@ -236,12 +244,13 @@ class AssetRepository:
         now = datetime.now(UTC)
 
         with self._storage.connect() as connection:
+            tag_id = self._ensure_tag_id(connection, normalized_tag)
             cursor = connection.execute(
                 """
-                INSERT OR IGNORE INTO asset_tags(asset_id, tag)
+                INSERT OR IGNORE INTO asset_tag_links(asset_id, tag_id)
                 VALUES(?, ?)
                 """,
-                (asset_id, normalized_tag),
+                (asset_id, tag_id),
             )
             if cursor.rowcount:
                 connection.execute(
@@ -257,15 +266,19 @@ class AssetRepository:
         normalized_tag = self._normalize_tag(tag)
 
         with self._storage.connect() as connection:
+            tag_id = self._tag_id_for_name(connection, normalized_tag)
+            if tag_id is None:
+                return False
             cursor = connection.execute(
-                "DELETE FROM asset_tags WHERE asset_id = ? AND tag = ?",
-                (asset_id, normalized_tag),
+                "DELETE FROM asset_tag_links WHERE asset_id = ? AND tag_id = ?",
+                (asset_id, tag_id),
             )
             if cursor.rowcount:
                 connection.execute(
                     "UPDATE assets SET updated_at = ? WHERE id = ?",
                     (datetime.now(UTC).isoformat(), asset_id),
                 )
+                self._prune_unused_tags(connection)
                 return True
             return False
 
@@ -276,31 +289,42 @@ class AssetRepository:
         normalized_new = self._normalize_tag(new_tag)
 
         with self._storage.connect() as connection:
-            existing = connection.execute(
-                "SELECT 1 FROM asset_tags WHERE asset_id = ? AND tag = ?",
-                (asset_id, normalized_old),
-            ).fetchone()
-            if existing is None:
+            old_tag_id = self._tag_id_for_name(connection, normalized_old)
+            if old_tag_id is None:
                 return None
 
-            collision = connection.execute(
-                "SELECT 1 FROM asset_tags WHERE asset_id = ? AND tag = ?",
-                (asset_id, normalized_new),
+            link_exists = connection.execute(
+                """
+                SELECT 1 FROM asset_tag_links
+                WHERE asset_id = ? AND tag_id = ?
+                """,
+                (asset_id, old_tag_id),
             ).fetchone()
-            if collision and normalized_new != normalized_old:
+            if link_exists is None:
+                return None
+
+            new_tag_id = self._ensure_tag_id(connection, normalized_new)
+            collision = connection.execute(
+                """
+                SELECT 1 FROM asset_tag_links WHERE asset_id = ? AND tag_id = ?
+                """,
+                (asset_id, new_tag_id),
+            ).fetchone()
+            if collision and new_tag_id != old_tag_id:
                 return None
 
             connection.execute(
                 """
-                UPDATE asset_tags SET tag = ?
-                WHERE asset_id = ? AND tag = ?
+                UPDATE asset_tag_links SET tag_id = ?
+                WHERE asset_id = ? AND tag_id = ?
                 """,
-                (normalized_new, asset_id, normalized_old),
+                (new_tag_id, asset_id, old_tag_id),
             )
             connection.execute(
                 "UPDATE assets SET updated_at = ? WHERE id = ?",
                 (datetime.now(UTC).isoformat(), asset_id),
             )
+            self._prune_unused_tags(connection)
             return normalized_new
 
     def tags_for_path(self, path: str) -> list[str]:
@@ -320,10 +344,11 @@ class AssetRepository:
         with self._storage.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT assets.path AS path, asset_tags.tag AS tag
+                SELECT assets.path AS path, tags.name AS tag
                 FROM assets
-                JOIN asset_tags ON asset_tags.asset_id = assets.id
-                ORDER BY assets.path COLLATE NOCASE, asset_tags.tag COLLATE NOCASE
+                JOIN asset_tag_links ON asset_tag_links.asset_id = assets.id
+                JOIN tags ON tags.id = asset_tag_links.tag_id
+                ORDER BY assets.path COLLATE NOCASE, tags.name COLLATE NOCASE
                 """
             ).fetchall()
 
@@ -341,11 +366,11 @@ class AssetRepository:
         with self._storage.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT DISTINCT tag FROM asset_tags
-                ORDER BY tag COLLATE NOCASE
+                SELECT name FROM tags
+                ORDER BY name COLLATE NOCASE
                 """
             ).fetchall()
-            return [str(row["tag"]) for row in rows]
+            return [str(row["name"]) for row in rows]
 
     def iter_tagged_assets(self) -> Iterator[tuple[str, list[str]]]:
         """Yield ``(path, tags)`` pairs for assets with assigned tags."""
@@ -353,10 +378,11 @@ class AssetRepository:
         with self._storage.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT assets.path AS path, asset_tags.tag AS tag
+                SELECT assets.path AS path, tags.name AS tag
                 FROM assets
-                JOIN asset_tags ON asset_tags.asset_id = assets.id
-                ORDER BY assets.path COLLATE NOCASE, asset_tags.tag COLLATE NOCASE
+                JOIN asset_tag_links ON asset_tag_links.asset_id = assets.id
+                JOIN tags ON tags.id = asset_tag_links.tag_id
+                ORDER BY assets.path COLLATE NOCASE, tags.name COLLATE NOCASE
                 """
             ).fetchall()
 
@@ -414,8 +440,11 @@ class AssetRepository:
     def _fetch_tags(self, connection: Connection, asset_id: int) -> list[str]:
         rows = connection.execute(
             """
-            SELECT tag FROM asset_tags WHERE asset_id = ?
-            ORDER BY tag COLLATE NOCASE
+            SELECT tags.name AS tag
+            FROM asset_tag_links
+            JOIN tags ON tags.id = asset_tag_links.tag_id
+            WHERE asset_tag_links.asset_id = ?
+            ORDER BY tags.name COLLATE NOCASE
             """,
             (asset_id,),
         ).fetchall()
@@ -439,10 +468,11 @@ class AssetRepository:
         placeholders = ",".join(["?"] * len(asset_ids))
         rows = connection.execute(
             f"""
-            SELECT asset_id, tag
-            FROM asset_tags
+            SELECT asset_tag_links.asset_id AS asset_id, tags.name AS tag
+            FROM asset_tag_links
+            JOIN tags ON tags.id = asset_tag_links.tag_id
             WHERE asset_id IN ({placeholders})
-            ORDER BY asset_id, tag COLLATE NOCASE
+            ORDER BY asset_tag_links.asset_id, tags.name COLLATE NOCASE
             """,
             asset_ids,
         ).fetchall()
@@ -478,12 +508,45 @@ class AssetRepository:
 
     def _replace_tags(self, connection: Connection, asset_id: int, tags: list[str]) -> None:
         connection.execute(
-            "DELETE FROM asset_tags WHERE asset_id = ?",
+            "DELETE FROM asset_tag_links WHERE asset_id = ?",
             (asset_id,),
         )
         if not tags:
             return
+        tag_ids = [self._ensure_tag_id(connection, tag) for tag in tags]
         connection.executemany(
-            "INSERT INTO asset_tags(asset_id, tag) VALUES(?, ?)",
-            [(asset_id, tag) for tag in tags],
+            "INSERT OR IGNORE INTO asset_tag_links(asset_id, tag_id) VALUES(?, ?)",
+            [(asset_id, tag_id) for tag_id in tag_ids],
+        )
+
+    def _ensure_tag_id(self, connection: Connection, tag: str) -> int:
+        existing = connection.execute(
+            "SELECT id FROM tags WHERE name = ?",
+            (tag,),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
+        cursor = connection.execute(
+            "INSERT INTO tags(name) VALUES(?)",
+            (tag,),
+        )
+        return int(cursor.lastrowid)
+
+    def _tag_id_for_name(self, connection: Connection, tag: str) -> int | None:
+        row = connection.execute(
+            "SELECT id FROM tags WHERE name = ?",
+            (tag,),
+        ).fetchone()
+        if row is None:
+            return None
+        return int(row["id"])
+
+    def _prune_unused_tags(self, connection: Connection) -> None:
+        connection.execute(
+            """
+            DELETE FROM tags
+            WHERE id NOT IN (
+                SELECT DISTINCT tag_id FROM asset_tag_links
+            )
+            """
         )

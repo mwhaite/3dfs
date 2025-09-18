@@ -19,13 +19,20 @@ CREATE TABLE IF NOT EXISTS assets (
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS asset_tags (
-    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
-    tag TEXT NOT NULL COLLATE NOCASE,
-    PRIMARY KEY (asset_id, tag)
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE
 );
 
-CREATE INDEX IF NOT EXISTS idx_asset_tags_tag ON asset_tags(tag);
+CREATE TABLE IF NOT EXISTS asset_tag_links (
+    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (asset_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+CREATE INDEX IF NOT EXISTS idx_asset_tag_links_tag_id ON asset_tag_links(tag_id);
+CREATE INDEX IF NOT EXISTS idx_asset_tag_links_asset_id ON asset_tag_links(asset_id);
 """
 
 
@@ -74,3 +81,58 @@ class SQLiteStorage:
 
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            self._migrate_legacy_tags(connection)
+
+    def _migrate_legacy_tags(self, connection: sqlite3.Connection) -> None:
+        """Upgrade databases created prior to the dedicated tag tables.
+
+        The original schema stored tags directly in an ``asset_tags`` table with
+        ``(asset_id, tag)`` pairs.  The current schema normalizes tag names into
+        a dedicated ``tags`` table and tracks many-to-many relationships via
+        ``asset_tag_links``.  When the legacy table is detected the data is
+        copied into the new structures and the outdated table is removed.
+        """
+
+        legacy_table = connection.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name = 'asset_tags'
+            """
+        ).fetchone()
+        if legacy_table is None:
+            return
+
+        column_info = connection.execute("PRAGMA table_info(asset_tags)").fetchall()
+        column_names = {row["name"] for row in column_info}
+        if "tag" not in column_names:
+            # The database already uses the new schema.
+            return
+
+        rows = connection.execute(
+            "SELECT asset_id, tag FROM asset_tags"
+        ).fetchall()
+
+        def ensure_tag_id(tag_name: str) -> int:
+            existing = connection.execute(
+                "SELECT id FROM tags WHERE name = ?",
+                (tag_name,),
+            ).fetchone()
+            if existing is not None:
+                return int(existing["id"])
+            cursor = connection.execute(
+                "INSERT INTO tags(name) VALUES(?)",
+                (tag_name,),
+            )
+            return int(cursor.lastrowid)
+
+        for row in rows:
+            tag_value = (row["tag"] or "").strip()
+            if not tag_value:
+                continue
+            tag_id = ensure_tag_id(tag_value)
+            connection.execute(
+                "INSERT OR IGNORE INTO asset_tag_links(asset_id, tag_id) VALUES(?, ?)",
+                (row["asset_id"], tag_id),
+            )
+
+        connection.execute("DROP TABLE asset_tags")
