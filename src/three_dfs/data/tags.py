@@ -20,7 +20,9 @@ class TagStore:
         service: AssetService | None = None,
     ) -> None:
         if path is not None and service is not None:
-            raise ValueError("Provide either a database path or an AssetService, not both.")
+            raise ValueError(
+                "Provide either a database path or an AssetService, not both."
+            )
 
         if service is None:
             storage = SQLiteStorage(path)

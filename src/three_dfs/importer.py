@@ -15,16 +15,16 @@ try:  # pragma: no cover - import guard exercised via tests
 except ImportError:  # pragma: no cover - dependency guaranteed in production
     trimesh = None  # type: ignore[assignment]
 
-from .storage import AssetService
-
 if TYPE_CHECKING:
-    from .storage import AssetRecord
+    from .storage import AssetRecord, AssetService
 
 __all__ = [
     "SUPPORTED_EXTENSIONS",
     "AssetImportError",
     "UnsupportedAssetTypeError",
     "import_asset",
+    "load_trimesh_mesh",
+    "extract_step_metadata",
 ]
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ def import_asset(
 
     metadata.update(_extract_format_metadata(destination, extension))
 
-    asset_service = service or AssetService()
+    asset_service = service or _default_asset_service()
     try:
         record = asset_service.create_asset(
             destination.as_posix(),
@@ -126,6 +126,14 @@ def import_asset(
         raise
 
     return record
+
+
+def _default_asset_service() -> AssetService:
+    """Return a lazily imported :class:`AssetService` instance."""
+
+    from .storage import AssetService as _AssetService
+
+    return _AssetService()
 
 
 def _allocate_destination(storage_root: Path, filename: str) -> Path:
@@ -161,21 +169,31 @@ def _extract_format_metadata(path: Path, extension: str) -> dict[str, Any]:
         return {}
 
 
-def _extract_trimesh_metadata(path: Path) -> dict[str, Any]:
-    """Return mesh statistics using :mod:`trimesh` for OBJ/STL models."""
+def load_trimesh_mesh(path: Path):
+    """Load *path* into a :class:`trimesh.Trimesh` instance when possible."""
 
     if trimesh is None:  # pragma: no cover - dependency enforced at runtime
-        logger.warning("trimesh is unavailable; skipping mesh metadata for %s", path)
-        return {}
+        logger.warning("trimesh is unavailable; unable to load mesh for %s", path)
+        return None
 
     mesh = trimesh.load(path, force="mesh")  # type: ignore[call-arg]
 
     if isinstance(mesh, trimesh.Scene):  # type: ignore[attr-defined]
         if not mesh.geometry:
-            return {}
+            return None
         mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))  # type: ignore[assignment]
 
     if not isinstance(mesh, trimesh.Trimesh):  # type: ignore[attr-defined]
+        return None
+
+    return mesh
+
+
+def _extract_trimesh_metadata(path: Path) -> dict[str, Any]:
+    """Return mesh statistics using :mod:`trimesh` for OBJ/STL models."""
+
+    mesh = load_trimesh_mesh(path)
+    if mesh is None:
         return {}
 
     metadata: dict[str, Any] = {}
@@ -207,7 +225,7 @@ _STEP_POINT_RE = re.compile(
 _STEP_UNIT_RE = re.compile(r"SI_UNIT\(([^)]*)\)", re.IGNORECASE)
 
 
-def _extract_step_metadata(path: Path) -> dict[str, Any]:
+def extract_step_metadata(path: Path) -> dict[str, Any]:
     """Return coarse STEP metadata extracted via lightweight parsing."""
 
     try:
@@ -325,6 +343,6 @@ _Extractor = Callable[[Path], dict[str, Any]]
 _FORMAT_EXTRACTORS: dict[str, _Extractor] = {
     ".stl": _extract_trimesh_metadata,
     ".obj": _extract_trimesh_metadata,
-    ".step": _extract_step_metadata,
-    ".stp": _extract_step_metadata,
+    ".step": extract_step_metadata,
+    ".stp": extract_step_metadata,
 }
