@@ -3,6 +3,7 @@
 from .models import (
     DEFAULT_DATABASE_URL,
     Asset,
+    AssetRelationship,
     Attachment,
     AuditLog,
     Base,
@@ -20,6 +21,7 @@ __all__ = [
     "Attachment",
     "AuditLog",
     "Asset",
+    "AssetRelationship",
     "Base",
     "DEFAULT_DATABASE_URL",
     "PrinterProfile",

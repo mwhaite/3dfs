@@ -11,6 +11,8 @@ project.  The schema models the core asset management concepts:
   many-to-many association table.
 * :class:`PrinterProfile` – reusable printer settings that can be referenced
   by versions.
+* :class:`AssetRelationship` – directed links between assets used to model
+  assemblies, related structures, and other metadata-rich associations.
 * :class:`AuditLog` – append-only records describing actions performed on an
   asset.
 
@@ -28,6 +30,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -183,6 +186,22 @@ class Asset(Base):
         passive_deletes=True,
         order_by="desc(AuditLog.created_at)",
     )
+    outgoing_relationships: Mapped[list[AssetRelationship]] = relationship(
+        "AssetRelationship",
+        foreign_keys="AssetRelationship.source_asset_id",
+        back_populates="source_asset",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="AssetRelationship.created_at",
+    )
+    incoming_relationships: Mapped[list[AssetRelationship]] = relationship(
+        "AssetRelationship",
+        foreign_keys="AssetRelationship.target_asset_id",
+        back_populates="target_asset",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="AssetRelationship.created_at",
+    )
 
 
 class Version(Base):
@@ -292,10 +311,55 @@ class AuditLog(Base):
     asset: Mapped[Asset] = relationship(back_populates="audit_logs")
 
 
+class AssetRelationship(Base):
+    """Directed association between assets capturing structural metadata."""
+
+    __tablename__ = "asset_relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_asset_id",
+            "target_asset_id",
+            "relationship_type",
+            name="uq_asset_relationship",
+        ),
+        CheckConstraint(
+            "source_asset_id != target_asset_id",
+            name="ck_asset_relationship_not_self",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_asset_id: Mapped[int] = mapped_column(
+        ForeignKey("assets.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    target_asset_id: Mapped[int] = mapped_column(
+        ForeignKey("assets.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    relationship_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    context: Mapped[dict[str, Any] | None] = mapped_column(JSON())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        nullable=False,
+    )
+
+    source_asset: Mapped[Asset] = relationship(
+        Asset,
+        foreign_keys=[source_asset_id],
+        back_populates="outgoing_relationships",
+    )
+    target_asset: Mapped[Asset] = relationship(
+        Asset,
+        foreign_keys=[target_asset_id],
+        back_populates="incoming_relationships",
+    )
+
+
 __all__ = [
     "Attachment",
     "AuditLog",
     "Asset",
+    "AssetRelationship",
     "Base",
     "DEFAULT_DATABASE_URL",
     "SessionLocal",
