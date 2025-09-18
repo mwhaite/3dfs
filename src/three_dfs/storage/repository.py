@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any
 
 from .database import SQLiteStorage
 
@@ -455,10 +456,7 @@ class AssetRepository:
             return []
         asset_ids = [row["id"] for row in rows]
         tags_map = self._tags_for_asset_ids(connection, asset_ids)
-        return [
-            self._row_to_record(row, tags_map.get(row["id"], []))
-            for row in rows
-        ]
+        return [self._row_to_record(row, tags_map.get(row["id"], [])) for row in rows]
 
     def _tags_for_asset_ids(
         self, connection: Connection, asset_ids: list[int]
@@ -506,7 +504,9 @@ class AssetRepository:
             return dict(data)
         return {}
 
-    def _replace_tags(self, connection: Connection, asset_id: int, tags: list[str]) -> None:
+    def _replace_tags(
+        self, connection: Connection, asset_id: int, tags: list[str]
+    ) -> None:
         connection.execute(
             "DELETE FROM asset_tag_links WHERE asset_id = ?",
             (asset_id,),

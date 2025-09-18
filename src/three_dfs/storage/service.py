@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any
 
 from .repository import AssetRecord, AssetRepository
 

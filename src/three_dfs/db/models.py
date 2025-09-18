@@ -20,6 +20,7 @@ SQLite-backed engine, constructing sessions, and accessing the shared
 ``get_engine``/``create_session_factory`` to bootstrap the database without
 having to duplicate configuration boilerplate.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
