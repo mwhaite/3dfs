@@ -718,183 +718,6 @@ class AssetRepository:
         if current_path is not None:
             yield current_path, list(bucket)
 
-    # ------------------------------------------------------------------
-    # Customization operations
-    # ------------------------------------------------------------------
-    def create_customization(
-        self,
-        base_asset_id: int,
-        payload: Mapping[str, Any],
-    ) -> CustomizationRecord:
-        """Persist a new customization record."""
-
-        now = datetime.now(UTC)
-        serialized = json.dumps(dict(payload))
-        with self._storage.connect() as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO customizations(base_asset_id, parameters, created_at, updated_at)
-                VALUES(?, ?, ?, ?)
-                """,
-                (base_asset_id, serialized, now.isoformat(), now.isoformat()),
-            )
-            customization_id = int(cursor.lastrowid)
-            row = connection.execute(
-                "SELECT * FROM customizations WHERE id = ?",
-                (customization_id,),
-            ).fetchone()
-        if row is None:
-            raise RuntimeError("Failed to persist customization record")
-        return self._row_to_customization(row)
-
-    def update_customization(
-        self,
-        customization_id: int,
-        payload: Mapping[str, Any],
-    ) -> CustomizationRecord:
-        """Update the stored payload for a customization."""
-
-        now = datetime.now(UTC)
-        serialized = json.dumps(dict(payload))
-        with self._storage.connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE customizations
-                SET parameters = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (serialized, now.isoformat(), customization_id),
-            )
-            if not cursor.rowcount:
-                raise KeyError(f"Customization {customization_id} does not exist")
-            row = connection.execute(
-                "SELECT * FROM customizations WHERE id = ?",
-                (customization_id,),
-            ).fetchone()
-        if row is None:
-            raise KeyError(f"Customization {customization_id} does not exist")
-        return self._row_to_customization(row)
-
-    def get_customization(self, customization_id: int) -> CustomizationRecord | None:
-        """Return the customization identified by *customization_id*."""
-
-        with self._storage.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM customizations WHERE id = ?",
-                (customization_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_customization(row)
-
-    def list_customizations_for_asset(
-        self, base_asset_id: int
-    ) -> list[CustomizationRecord]:
-        """Return customization records associated with *base_asset_id*."""
-
-        with self._storage.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT * FROM customizations
-                WHERE base_asset_id = ?
-                ORDER BY created_at DESC
-                """,
-                (base_asset_id,),
-            ).fetchall()
-        return [self._row_to_customization(row) for row in rows]
-
-    def delete_customization(self, customization_id: int) -> bool:
-        """Remove the customization identified by *customization_id*."""
-
-        with self._storage.connect() as connection:
-            cursor = connection.execute(
-                "DELETE FROM customizations WHERE id = ?",
-                (customization_id,),
-            )
-            removed = bool(cursor.rowcount)
-            if removed:
-                connection.execute(
-                    "DELETE FROM asset_relationships WHERE customization_id = ?",
-                    (customization_id,),
-                )
-            return removed
-
-    def attach_generated_asset(
-        self,
-        customization_id: int,
-        generated_asset_id: int,
-        relationship_type: str,
-    ) -> AssetRelationshipRecord:
-        """Associate *generated_asset_id* with *customization_id*."""
-
-        now = datetime.now(UTC)
-        with self._storage.connect() as connection:
-            cursor = connection.execute(
-                """
-                INSERT OR IGNORE INTO asset_relationships(
-                    customization_id,
-                    generated_asset_id,
-                    relationship_type,
-                    created_at,
-                    updated_at
-                ) VALUES(?, ?, ?, ?, ?)
-                """,
-                (
-                    customization_id,
-                    generated_asset_id,
-                    relationship_type,
-                    now.isoformat(),
-                    now.isoformat(),
-                ),
-            )
-            if not cursor.rowcount:
-                connection.execute(
-                    """
-                    UPDATE asset_relationships
-                    SET updated_at = ?
-                    WHERE customization_id = ?
-                        AND generated_asset_id = ?
-                        AND relationship_type = ?
-                    """,
-                    (
-                        now.isoformat(),
-                        customization_id,
-                        generated_asset_id,
-                        relationship_type,
-                    ),
-                )
-            row = connection.execute(
-                """
-                SELECT * FROM asset_relationships
-                WHERE customization_id = ?
-                    AND generated_asset_id = ?
-                    AND relationship_type = ?
-                """,
-                (customization_id, generated_asset_id, relationship_type),
-            ).fetchone()
-        if row is None:
-            raise RuntimeError("Unable to persist asset relationship")
-        return self._row_to_relationship(row)
-
-    def generated_assets_for_customization(
-        self, customization_id: int
-    ) -> list[AssetRelationshipRecord]:
-        """Return asset relationships for *customization_id*."""
-
-        with self._storage.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT * FROM asset_relationships
-                WHERE customization_id = ?
-                ORDER BY generated_asset_id, relationship_type
-                """,
-                (customization_id,),
-            ).fetchall()
-        return [self._row_to_relationship(row) for row in rows]
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
     def _normalize_path(self, path: str) -> str:
         value = str(path).strip()
         if not value:
@@ -1008,7 +831,7 @@ class AssetRepository:
             updated_at=updated_at,
         )
 
-    def _row_to_customization(self, row) -> CustomizationRecord:
+    def _row_to_customization_record(self, row) -> CustomizationRecord:
         parameter_schema = self._deserialize_metadata(row["parameter_schema"])
         parameter_values = self._deserialize_metadata(row["parameter_values"])
         created_at = datetime.fromisoformat(row["created_at"])
@@ -1016,13 +839,9 @@ class AssetRepository:
         return CustomizationRecord(
             id=row["id"],
             base_asset_id=row["base_asset_id"],
-
-            payload=payload,
-
             backend_identifier=str(row["backend_identifier"]),
             parameter_schema=parameter_schema,
             parameter_values=parameter_values,
-
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -1043,17 +862,6 @@ class AssetRepository:
         )
 
     def _deserialize_metadata(self, payload: str | None) -> dict[str, Any]:
-        if not payload:
-            return {}
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(data, dict):
-            return dict(data)
-        return {}
-
-    def _deserialize_customization_payload(self, payload: str | None) -> dict[str, Any]:
         if not payload:
             return {}
         try:

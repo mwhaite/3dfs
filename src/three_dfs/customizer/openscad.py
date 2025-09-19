@@ -119,9 +119,6 @@ class OpenSCADBackend(CustomizerBackend):
             metadata=session_metadata,
         )
 
-        if asset_service is not None:
-            session = asset_service.record_customization_session(session)
-
         if execute:
             subprocess.run(command, check=True)
 
