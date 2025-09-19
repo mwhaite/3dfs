@@ -6,19 +6,11 @@ from unittest.mock import patch
 import pytest
 
 from three_dfs.customizer.openscad import OpenSCADBackend
-from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
 
 
 @pytest.fixture()
 def fixture_path() -> Path:
     return Path(__file__).with_name("data") / "example.scad"
-
-
-@pytest.fixture()
-def asset_service(tmp_path: Path) -> AssetService:
-    storage = SQLiteStorage(tmp_path / "assets.sqlite3")
-    repository = AssetRepository(storage)
-    return AssetService(repository)
 
 
 def test_load_schema_parses_descriptors(fixture_path: Path) -> None:
@@ -71,8 +63,8 @@ def test_validate_enforces_constraints(fixture_path: Path) -> None:
         backend.validate(schema, {"material": "glass"})
 
 
-def test_plan_build_constructs_command_and_persists_session(
-    fixture_path: Path, asset_service: AssetService, tmp_path: Path
+def test_plan_build_constructs_command_and_returns_session(
+    fixture_path: Path, tmp_path: Path
 ) -> None:
     backend = OpenSCADBackend()
     schema = backend.load_schema(fixture_path)
@@ -85,16 +77,14 @@ def test_plan_build_constructs_command_and_persists_session(
             schema,
             overrides,
             output_dir=tmp_path / "build",
-            asset_service=asset_service,
         )
 
     mocked_run.assert_not_called()
 
-    assert session.session_id is not None
+    assert session.session_id is None
     assert session.metadata["backend"] == "openscad"
 
     artifact = session.artifacts[0]
-    assert artifact.asset_id is not None
     assert artifact.path.endswith("example.stl")
 
     command = list(session.command)
@@ -109,11 +99,3 @@ def test_plan_build_constructs_command_and_persists_session(
     assert overrides_from_command["segments"] == "10"
     assert overrides_from_command["material"] == '"wood"'
     assert overrides_from_command["use_logo"] == "true"
-
-    stored = asset_service.get_customization_session(session.session_id)
-    assert stored is not None
-    assert stored.parameters == session.parameters
-    assert stored.artifacts[0].asset_id == artifact.asset_id
-
-    listing = asset_service.list_customization_sessions(str(fixture_path))
-    assert [item.session_id for item in listing] == [session.session_id]

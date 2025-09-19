@@ -12,6 +12,9 @@ __all__ = [
     "GeneratedArtifact",
     "CustomizerSession",
     "CustomizerBackend",
+    "ArtifactResult",
+    "PipelineResult",
+    "execute_customization",
 ]
 
 
@@ -196,6 +199,9 @@ class CustomizerBackend(Protocol):
         metadata: Mapping[str, Any] | None = None,
     ) -> CustomizerSession:
         """Return a :class:`CustomizerSession` describing the build plan."""
+
+
+from .pipeline import ArtifactResult, PipelineResult, execute_customization
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing helpers

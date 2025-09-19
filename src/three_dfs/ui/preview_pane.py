@@ -541,6 +541,54 @@ def _build_image_preview(path: Path) -> tuple[list[tuple[str, str]], bytes]:
         return metadata, buffer.getvalue()
 
 
+def _extract_customizer_preview(
+    asset_metadata: Mapping[str, Any] | None,
+) -> tuple[bytes, dict[str, Any]] | None:
+    if not isinstance(asset_metadata, Mapping):
+        return None
+
+    customization = asset_metadata.get("customization")
+    if not isinstance(customization, Mapping):
+        return None
+
+    previews = customization.get("previews")
+    if isinstance(previews, Mapping):
+        candidates = [previews]
+    elif isinstance(previews, Iterable) and not isinstance(previews, (str, bytes)):
+        candidates = [item for item in previews if isinstance(item, Mapping)]
+    else:
+        return None
+
+    for candidate in candidates:
+        managed_path = candidate.get("managed_path")
+        raw_path = candidate.get("path")
+        path_hint = managed_path if isinstance(managed_path, str) else raw_path
+        if not isinstance(path_hint, str) or not path_hint.strip():
+            continue
+
+        resolved = Path(path_hint).expanduser()
+        if not resolved.exists():
+            continue
+
+        try:
+            payload = resolved.read_bytes()
+        except OSError:
+            continue
+
+        info = {
+            "source": "customization",
+            "path": str(resolved),
+            "managed_path": str(resolved),
+        }
+        for key in ("asset_id", "relationship", "label", "content_type"):
+            value = candidate.get(key)
+            if value is not None:
+                info[key] = value
+        return payload, info
+
+    return None
+
+
 def _build_model_preview(
     path: Path,
     *,
@@ -569,6 +617,17 @@ def _build_model_preview(
 
     thumbnail_result: ThumbnailResult | None = None
     updated_asset = asset_record
+
+    custom_preview = _extract_customizer_preview(asset_metadata)
+    if custom_preview is not None:
+        preview_bytes, preview_info = custom_preview
+        return (
+            metadata,
+            preview_bytes,
+            "Preview provided by customization backend.",
+            preview_info,
+            updated_asset,
+        )
 
     if asset_service is not None and asset_record is not None:
         updated_asset, thumbnail_result = asset_service.ensure_thumbnail(

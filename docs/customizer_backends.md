@@ -10,17 +10,18 @@ implement the `CustomizerBackend` protocol which defines three primary hooks:
 * `validate(schema, values) -> dict` normalises user supplied overrides using the
   schema information and raises `ValueError` when values fall outside the
   declared constraints.
-* `plan_build(path, schema, values, *, output_dir, asset_service, ...)`
+* `plan_build(path, schema, values, *, output_dir, ...)`
   prepares a `CustomizerSession` including the command line invocation required
-  to produce managed artefacts.  The session metadata is persisted through the
-  `AssetService.record_customization_session` helper so that workflows can be
-  rehydrated, cloned, or inspected at a later date.
+  to produce managed artefacts.  The resulting session is consumed by the
+  `three_dfs.customizer.execute_customization` pipeline which executes the
+  backend, copies generated files into managed storage, and persists the
+  resulting assets and metadata.
 
 A session captures the normalised parameter values, the command arguments
-required to run the build, and the artefacts that will be produced.  Each
-`GeneratedArtifact` stores the managed asset identifier once persisted which
-allows `AssetService.get_customization_session` to provide a fully hydrated
-view of previous runs.
+required to run the build, and the artefacts that will be produced.  The
+pipeline records derivative relationships between the base asset and each
+generated artefact, storing preview hints where available so subsequent UI
+flows can display backend-provided imagery without re-rendering thumbnails.
 
 ## OpenSCAD backend
 
@@ -28,15 +29,15 @@ view of previous runs.
 interpret tool-specific annotations.  It understands OpenSCAD customiser
 comments such as `[1:10]` sliders and option lists, maps them into parameter
 metadata, and constructs an `openscad` CLI invocation with the appropriate
-`-D` overrides.  The backend stores session metadata via the asset service so
-repeat builds have access to both the parameter schema and the generated
-outputs.
+`-D` overrides.  The backend focuses on describing the build; persistence is
+handled by the pipeline which records the parameter schema, normalised values,
+and all produced artefacts.
 
 ## Adapting additional engines
 
 Extending the system to support another parametric modelling engine—such as a
 Build123D-based workflow—only requires translating that tool's metadata into a
 `ParameterSchema` and implementing the `plan_build` hook to express how the
-engine should be executed.  The resulting `CustomizerSession` will integrate
-with the existing persistence helpers, enabling consistent storage and
-rehydration across all backends.
+engine should be executed.  The resulting `CustomizerSession` integrates with
+the shared execution pipeline, enabling consistent storage and reproducibility
+across all backends.
