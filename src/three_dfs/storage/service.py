@@ -4,10 +4,12 @@ from __future__ import annotations
 
 
 import logging
+from pathlib import Path
 
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
+
 
 from .repository import (
     AssetRecord,
@@ -15,6 +17,7 @@ from .repository import (
     AssetRepository,
     CustomizationRecord,
 )
+
 from ..thumbnails import (
     DEFAULT_THUMBNAIL_SIZE,
     ThumbnailCache,
@@ -22,6 +25,7 @@ from ..thumbnails import (
     ThumbnailManager,
     ThumbnailResult,
 )
+from .repository import AssetRecord, AssetRepository
 
 
 
@@ -383,6 +387,109 @@ class AssetService:
             cache = self._thumbnail_cache or ThumbnailCache()
             self._thumbnail_manager = ThumbnailManager(cache)
         return self._thumbnail_manager
+
+    # ------------------------------------------------------------------
+    # Customization session operations
+    # ------------------------------------------------------------------
+    def record_customization_session(
+        self, session: CustomizerSession
+    ) -> CustomizerSession:
+        """Persist *session* metadata returning the stored state."""
+
+        base_path = str(session.base_asset_path)
+        base_label = Path(base_path).name or base_path
+        base_asset = self.ensure_asset(base_path, label=base_label)
+
+        prepared_artifacts: list[GeneratedArtifact] = []
+        for artifact in session.artifacts:
+            artifact_path = str(artifact.path)
+            artifact_label = artifact.label or Path(artifact_path).name or artifact_path
+            asset = self.ensure_asset(artifact_path, label=artifact_label)
+            prepared_artifacts.append(
+                replace(
+                    artifact,
+                    path=asset.path,
+                    label=artifact_label,
+                    asset_id=asset.id,
+                )
+            )
+
+        payload = session.to_dict()
+        payload["base_asset_path"] = base_asset.path
+        payload["artifacts"] = [artifact.to_dict() for artifact in prepared_artifacts]
+
+        record = self._repository.create_customization(base_asset.id, payload)
+
+        for artifact in prepared_artifacts:
+            if artifact.asset_id is None:
+                continue
+            self._repository.attach_generated_asset(
+                record.id, artifact.asset_id, artifact.relationship
+            )
+
+        return CustomizerSession.from_dict(payload, session_id=record.id)
+
+    def get_customization_session(
+        self, session_id: int
+    ) -> CustomizerSession | None:
+        """Return the persisted session identified by *session_id*."""
+
+        record = self._repository.get_customization(session_id)
+        if record is None:
+            return None
+
+        base_asset = self._repository.get_asset(record.base_asset_id)
+        session = CustomizerSession.from_dict(record.payload, session_id=record.id)
+        base_path = base_asset.path if base_asset is not None else session.base_asset_path
+
+        relationships = self._repository.generated_assets_for_customization(record.id)
+        relationship_map = {
+            relation.generated_asset_id: relation.relationship_type
+            for relation in relationships
+        }
+
+        resolved_artifacts: list[GeneratedArtifact] = []
+        for artifact in session.artifacts:
+            asset_record = None
+            if artifact.asset_id is not None:
+                asset_record = self._repository.get_asset(artifact.asset_id)
+            if asset_record is not None:
+                relationship = relationship_map.get(
+                    asset_record.id, artifact.relationship
+                )
+                resolved_artifact = replace(
+                    artifact,
+                    path=asset_record.path,
+                    label=artifact.label or asset_record.label,
+                    relationship=relationship,
+                    asset_id=asset_record.id,
+                )
+            else:
+                resolved_artifact = artifact
+            resolved_artifacts.append(resolved_artifact)
+
+        return replace(
+            session,
+            base_asset_path=base_path,
+            artifacts=tuple(resolved_artifacts),
+        )
+
+    def list_customization_sessions(
+        self, base_asset_path: str
+    ) -> list[CustomizerSession]:
+        """Return all sessions associated with *base_asset_path*."""
+
+        asset = self.get_asset_by_path(base_asset_path)
+        if asset is None:
+            return []
+
+        records = self._repository.list_customizations_for_asset(asset.id)
+        sessions: list[CustomizerSession] = []
+        for record in records:
+            session = self.get_customization_session(record.id)
+            if session is not None:
+                sessions.append(session)
+        return sessions
 
     # ------------------------------------------------------------------
     # Convenience helpers
