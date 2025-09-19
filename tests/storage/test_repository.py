@@ -22,9 +22,39 @@ def test_sqlite_storage_initializes_schema(tmp_path: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
+        columns = {
+            table: {
+                row["name"]: row
+                for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            for table in ("customizations", "asset_relationships")
+        }
 
-    assert {"assets", "tags", "asset_tag_links"}.issubset(tables)
+    assert {
+        "assets",
+        "tags",
+        "asset_tag_links",
+        "customizations",
+        "asset_relationships",
+    }.issubset(tables)
     assert "asset_tags" not in tables
+
+    assert set(columns["customizations"]) == {
+        "id",
+        "base_asset_id",
+        "parameters",
+        "created_at",
+        "updated_at",
+    }
+    assert columns["customizations"]["parameters"]["dflt_value"] == "'{}'"
+
+    assert set(columns["asset_relationships"]) == {
+        "customization_id",
+        "generated_asset_id",
+        "relationship_type",
+        "created_at",
+        "updated_at",
+    }
 
 
 def test_asset_repository_persists_records(tmp_path: Path) -> None:
@@ -120,7 +150,13 @@ def test_sqlite_storage_migrates_legacy_tag_schema(tmp_path: Path) -> None:
             ).fetchall()
         }
 
-    assert {"assets", "tags", "asset_tag_links"}.issubset(tables)
+    assert {
+        "assets",
+        "tags",
+        "asset_tag_links",
+        "customizations",
+        "asset_relationships",
+    }.issubset(tables)
     assert "asset_tags" not in tables
 
 
