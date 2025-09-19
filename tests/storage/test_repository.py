@@ -42,13 +42,18 @@ def test_sqlite_storage_initializes_schema(tmp_path: Path) -> None:
     assert set(columns["customizations"]) == {
         "id",
         "base_asset_id",
-        "parameters",
+        "backend_identifier",
+        "parameter_schema",
+        "parameter_values",
         "created_at",
         "updated_at",
     }
-    assert columns["customizations"]["parameters"]["dflt_value"] == "'{}'"
+    assert columns["customizations"]["parameter_schema"]["dflt_value"] == "'{}'"
+    assert columns["customizations"]["parameter_values"]["dflt_value"] == "'{}'"
 
     assert set(columns["asset_relationships"]) == {
+        "id",
+        "base_asset_id",
         "customization_id",
         "generated_asset_id",
         "relationship_type",
@@ -175,3 +180,165 @@ def test_asset_service_bootstrap_demo_data(tmp_path: Path) -> None:
     # At least one asset should expose tags via the service.
     tagged = {path: tags for path, tags in service.iter_tagged_assets()}
     assert tagged
+
+
+def test_customization_crud_and_relationships(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "assets.sqlite3")
+    repository = AssetRepository(storage)
+
+    base = repository.create_asset("assets/models/ship.fbx", label="Base ship")
+    derivative = repository.create_asset(
+        "assets/models/ship_variant.fbx", label="Variant ship"
+    )
+
+    customization = repository.create_customization(
+        base.id,
+        backend_identifier="diffusion",
+        parameter_schema={"prompt": {"type": "string"}},
+        parameter_values={"prompt": "Spaceship"},
+    )
+
+    assert customization.base_asset_id == base.id
+    assert customization.backend_identifier == "diffusion"
+    assert customization.parameter_schema["prompt"]["type"] == "string"
+    assert customization.parameter_values["prompt"] == "Spaceship"
+
+    fetched = repository.get_customization(customization.id)
+    assert fetched == customization
+
+    listed = repository.list_customizations_for_asset(base.id)
+    assert [entry.id for entry in listed] == [customization.id]
+
+    updated = repository.update_customization(
+        customization.id,
+        parameter_values={"prompt": "Rocket"},
+    )
+    assert updated.parameter_values["prompt"] == "Rocket"
+    assert updated.backend_identifier == "diffusion"
+
+    relationship = repository.create_asset_relationship(
+        customization.id,
+        derivative.id,
+        "variant",
+    )
+
+    assert relationship.base_asset_id == base.id
+    assert relationship.customization_id == customization.id
+    assert relationship.generated_asset_id == derivative.id
+
+    by_base = repository.list_relationships_for_base_asset(base.id)
+    assert [rel.id for rel in by_base] == [relationship.id]
+
+    by_generated = repository.list_relationships_for_generated_asset(derivative.id)
+    assert [rel.id for rel in by_generated] == [relationship.id]
+
+    derivative_list = repository.list_derivatives_for_asset(base.id)
+    assert [asset.id for asset in derivative_list] == [derivative.id]
+
+    base_lookup = repository.get_base_for_derivative(derivative.id)
+    assert base_lookup is not None
+    assert base_lookup.id == base.id
+
+    refreshed_relationship = repository.create_asset_relationship(
+        customization.id,
+        derivative.id,
+        "variant",
+    )
+    assert refreshed_relationship.id == relationship.id
+
+    assert repository.delete_asset_relationship(relationship.id)
+    assert repository.list_relationships_for_generated_asset(derivative.id) == []
+
+
+def test_customization_relationships_cascade(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "assets.sqlite3")
+    repository = AssetRepository(storage)
+
+    base = repository.create_asset("assets/models/ship.fbx", label="Base ship")
+    derivative = repository.create_asset(
+        "assets/models/ship_variant.fbx", label="Variant ship"
+    )
+
+    customization = repository.create_customization(
+        base.id,
+        backend_identifier="pipeline",
+    )
+    repository.create_asset_relationship(customization.id, derivative.id, "variant")
+
+    assert repository.delete_customization(customization.id)
+    assert repository.list_relationships_for_generated_asset(derivative.id) == []
+
+    customization = repository.create_customization(
+        base.id,
+        backend_identifier="pipeline",
+    )
+    repository.create_asset_relationship(customization.id, derivative.id, "variant")
+
+    repository.delete_asset(derivative.id)
+    assert repository.list_relationships_for_base_asset(base.id) == []
+
+    derivative = repository.create_asset(
+        "assets/models/ship_variant.fbx", label="Variant ship"
+    )
+    repository.create_asset_relationship(customization.id, derivative.id, "variant")
+
+    repository.delete_asset(base.id)
+    assert repository.get_customization(customization.id) is None
+    assert repository.list_relationships_for_generated_asset(derivative.id) == []
+    assert repository.list_customizations_for_asset(base.id) == []
+
+
+def test_asset_service_customization_helpers(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "assets.sqlite3")
+    repository = AssetRepository(storage)
+    service = AssetService(repository)
+
+    base_asset = service.create_asset("assets/models/ship.fbx", label="Base ship")
+
+    customization = service.create_customization(
+        base_asset.path,
+        backend_identifier="diffusion",
+        parameter_schema={"prompt": {"type": "string"}},
+        parameter_values={"prompt": "Spaceship"},
+    )
+
+    assert customization.base_asset_id == base_asset.id
+
+    listed = service.list_customizations_for_asset(base_asset.path)
+    assert [entry.id for entry in listed] == [customization.id]
+
+    updated = service.update_customization(
+        customization.id,
+        backend_identifier="diffusion-alt",
+        parameter_values={"prompt": "Rocket"},
+    )
+    assert updated.backend_identifier == "diffusion-alt"
+    assert updated.parameter_values["prompt"] == "Rocket"
+
+    derivative_asset, relationship = service.record_derivative(
+        customization.id,
+        "assets/models/ship_variant.fbx",
+        relationship_type="variant",
+        label="Variant ship",
+        metadata={"quality": "high"},
+        tags=["variant"],
+    )
+
+    assert derivative_asset.path == "assets/models/ship_variant.fbx"
+    assert "variant" in derivative_asset.tags
+    assert relationship.base_asset_id == base_asset.id
+
+    derivatives = service.list_derivatives_for_asset(base_asset.path)
+    assert [asset.id for asset in derivatives] == [derivative_asset.id]
+
+    base_lookup = service.get_base_for_derivative(derivative_asset.path)
+    assert base_lookup is not None and base_lookup.id == base_asset.id
+
+    assert service.list_customizations_for_asset("missing.asset") == []
+    assert service.get_base_for_derivative("missing.asset") is None
+
+    service.delete_asset(base_asset.id)
+
+    assert service.get_customization(customization.id) is None
+    assert service.list_derivatives_for_asset(base_asset.path) == []
+    assert service.get_base_for_derivative(derivative_asset.path) is None

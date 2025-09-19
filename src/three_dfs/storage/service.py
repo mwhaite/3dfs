@@ -9,6 +9,12 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .repository import (
+    AssetRecord,
+    AssetRelationshipRecord,
+    AssetRepository,
+    CustomizationRecord,
+)
 from ..thumbnails import (
     DEFAULT_THUMBNAIL_SIZE,
     ThumbnailCache,
@@ -157,6 +163,135 @@ class AssetService:
             path=path,
             label=label,
             **kwargs,
+        )
+
+    # ------------------------------------------------------------------
+    # Customization operations
+    # ------------------------------------------------------------------
+    def create_customization(
+        self,
+        base_path: str,
+        *,
+        backend_identifier: str,
+        parameter_schema: Mapping[str, Any] | None = None,
+        parameter_values: Mapping[str, Any] | None = None,
+    ) -> CustomizationRecord:
+        """Create a customization for the asset located at *base_path*."""
+
+        base_asset = self.ensure_asset(base_path, label=base_path)
+        return self._repository.create_customization(
+            base_asset.id,
+            backend_identifier=backend_identifier,
+            parameter_schema=parameter_schema,
+            parameter_values=parameter_values,
+        )
+
+    def get_customization(self, customization_id: int) -> CustomizationRecord | None:
+        """Return the customization identified by *customization_id*."""
+
+        return self._repository.get_customization(customization_id)
+
+    def list_customizations_for_asset(
+        self, base_path: str
+    ) -> list[CustomizationRecord]:
+        """Return all customizations associated with *base_path*."""
+
+        asset = self.get_asset_by_path(base_path)
+        if asset is None:
+            return []
+        return self._repository.list_customizations_for_asset(asset.id)
+
+    def update_customization(
+        self,
+        customization_id: int,
+        *,
+        backend_identifier: str | None = None,
+        parameter_schema: Mapping[str, Any] | None = None,
+        parameter_values: Mapping[str, Any] | None = None,
+    ) -> CustomizationRecord:
+        """Update an existing customization record."""
+
+        kwargs: dict[str, Any] = {}
+        if backend_identifier is not None:
+            kwargs["backend_identifier"] = backend_identifier
+        if parameter_schema is not None:
+            kwargs["parameter_schema"] = parameter_schema
+        if parameter_values is not None:
+            kwargs["parameter_values"] = parameter_values
+        return self._repository.update_customization(customization_id, **kwargs)
+
+    def delete_customization(self, customization_id: int) -> bool:
+        """Remove the customization identified by *customization_id*."""
+
+        return self._repository.delete_customization(customization_id)
+
+    def record_derivative(
+        self,
+        customization_id: int,
+        derivative_path: str,
+        *,
+        relationship_type: str,
+        label: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        tags: Iterable[str] | None = None,
+    ) -> tuple[AssetRecord, AssetRelationshipRecord]:
+        """Ensure a derivative asset exists and link it to a customization."""
+
+        derivative_label = label or derivative_path
+        derivative_asset = self.ensure_asset(
+            derivative_path,
+            label=derivative_label,
+            metadata=metadata,
+        )
+
+        update_kwargs: dict[str, Any] = {}
+        if label is not None:
+            update_kwargs["label"] = label
+        if metadata is not None:
+            update_kwargs["metadata"] = metadata
+        if tags is not None:
+            update_kwargs["tags"] = list(tags)
+        if update_kwargs:
+            derivative_asset = self._repository.update_asset(
+                derivative_asset.id,
+                **update_kwargs,
+            )
+
+        relationship = self._repository.create_asset_relationship(
+            customization_id,
+            derivative_asset.id,
+            relationship_type,
+        )
+        return derivative_asset, relationship
+
+    def list_derivatives_for_asset(
+        self,
+        base_path: str,
+        *,
+        relationship_type: str | None = None,
+    ) -> list[AssetRecord]:
+        """Return derivative assets generated from *base_path*."""
+
+        asset = self.get_asset_by_path(base_path)
+        if asset is None:
+            return []
+        return self._repository.list_derivatives_for_asset(
+            asset.id, relationship_type=relationship_type
+        )
+
+    def get_base_for_derivative(
+        self,
+        derivative_path: str,
+        *,
+        relationship_type: str | None = None,
+    ) -> AssetRecord | None:
+        """Return the originating asset for *derivative_path* if known."""
+
+        derivative = self.get_asset_by_path(derivative_path)
+        if derivative is None:
+            return None
+        return self._repository.get_base_for_derivative(
+            derivative.id, relationship_type=relationship_type
         )
 
     # ------------------------------------------------------------------
