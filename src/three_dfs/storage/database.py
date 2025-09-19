@@ -32,28 +32,38 @@ CREATE TABLE IF NOT EXISTS asset_tag_links (
 CREATE TABLE IF NOT EXISTS customizations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     base_asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
-    parameters TEXT NOT NULL DEFAULT '{}',
+    backend_identifier TEXT NOT NULL,
+    parameter_schema TEXT NOT NULL DEFAULT '{}',
+    parameter_values TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS asset_relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    base_asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     customization_id INTEGER NOT NULL REFERENCES customizations(id) ON DELETE CASCADE,
     generated_asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     relationship_type TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (customization_id, generated_asset_id, relationship_type)
+    UNIQUE (customization_id, generated_asset_id, relationship_type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
 CREATE INDEX IF NOT EXISTS idx_asset_tag_links_tag_id ON asset_tag_links(tag_id);
 CREATE INDEX IF NOT EXISTS idx_asset_tag_links_asset_id ON asset_tag_links(asset_id);
 CREATE INDEX IF NOT EXISTS idx_customizations_base_asset_id ON customizations(base_asset_id);
+CREATE INDEX IF NOT EXISTS idx_customizations_backend_identifier
+    ON customizations(backend_identifier);
+CREATE INDEX IF NOT EXISTS idx_asset_relationships_base_asset_id
+    ON asset_relationships(base_asset_id);
 CREATE INDEX IF NOT EXISTS idx_asset_relationships_customization_id
     ON asset_relationships(customization_id);
 CREATE INDEX IF NOT EXISTS idx_asset_relationships_generated_asset_id
     ON asset_relationships(generated_asset_id);
+CREATE INDEX IF NOT EXISTS idx_asset_relationships_relationship_type
+    ON asset_relationships(relationship_type);
 """
 
 
