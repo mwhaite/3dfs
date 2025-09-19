@@ -12,7 +12,12 @@ from typing import Any
 
 from .database import SQLiteStorage
 
-__all__ = ["AssetRecord", "AssetRepository"]
+__all__ = [
+    "AssetRecord",
+    "CustomizationRecord",
+    "AssetRelationshipRecord",
+    "AssetRepository",
+]
 
 
 @dataclass(slots=True)
@@ -24,6 +29,32 @@ class AssetRecord:
     label: str
     metadata: dict[str, Any]
     tags: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class CustomizationRecord:
+    """Represent a customization stored in the database."""
+
+    id: int
+    base_asset_id: int
+    backend_identifier: str
+    parameter_schema: dict[str, Any]
+    parameter_values: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class AssetRelationshipRecord:
+    """Describe a relationship linking a customization to a generated asset."""
+
+    id: int
+    base_asset_id: int
+    customization_id: int
+    generated_asset_id: int
+    relationship_type: str
     created_at: datetime
     updated_at: datetime
 
@@ -221,6 +252,287 @@ class AssetRepository:
             return deleted
 
     # ------------------------------------------------------------------
+    # Customization operations
+    # ------------------------------------------------------------------
+    def create_customization(
+        self,
+        base_asset_id: int,
+        *,
+        backend_identifier: str,
+        parameter_schema: Mapping[str, Any] | None = None,
+        parameter_values: Mapping[str, Any] | None = None,
+    ) -> CustomizationRecord:
+        """Persist a customization tied to *base_asset_id*."""
+
+        normalized_backend = self._normalize_backend_identifier(backend_identifier)
+        now = datetime.now(UTC)
+        serialized_schema = self._serialize_metadata(parameter_schema)
+        serialized_values = self._serialize_metadata(parameter_values)
+
+        with self._storage.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO customizations(
+                    base_asset_id,
+                    backend_identifier,
+                    parameter_schema,
+                    parameter_values,
+                    created_at,
+                    updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    base_asset_id,
+                    normalized_backend,
+                    serialized_schema,
+                    serialized_values,
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+            customization_id = int(cursor.lastrowid)
+            row = self._fetch_customization_row(connection, customization_id)
+
+        if row is None:  # pragma: no cover - defensive safeguard
+            raise RuntimeError("Failed to create customization record")
+        return self._row_to_customization_record(row)
+
+    def get_customization(self, customization_id: int) -> CustomizationRecord | None:
+        """Return the customization identified by *customization_id*."""
+
+        with self._storage.connect() as connection:
+            row = self._fetch_customization_row(connection, customization_id)
+        if row is None:
+            return None
+        return self._row_to_customization_record(row)
+
+    def list_customizations_for_asset(
+        self, base_asset_id: int
+    ) -> list[CustomizationRecord]:
+        """Return all customizations associated with *base_asset_id*."""
+
+        with self._storage.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM customizations
+                WHERE base_asset_id = ?
+                ORDER BY created_at ASC
+                """,
+                (base_asset_id,),
+            ).fetchall()
+        return [self._row_to_customization_record(row) for row in rows]
+
+    def update_customization(
+        self,
+        customization_id: int,
+        *,
+        backend_identifier: str | None = None,
+        parameter_schema: Mapping[str, Any] | None | object = _MISSING,
+        parameter_values: Mapping[str, Any] | None | object = _MISSING,
+    ) -> CustomizationRecord:
+        """Apply updates to a customization record."""
+
+        updates: list[str] = []
+        params: list[Any] = []
+
+        if backend_identifier is not None:
+            updates.append("backend_identifier = ?")
+            params.append(self._normalize_backend_identifier(backend_identifier))
+        if parameter_schema is not _MISSING:
+            updates.append("parameter_schema = ?")
+            params.append(self._serialize_metadata(parameter_schema))
+        if parameter_values is not _MISSING:
+            updates.append("parameter_values = ?")
+            params.append(self._serialize_metadata(parameter_values))
+
+        now = datetime.now(UTC)
+
+        with self._storage.connect() as connection:
+            if updates:
+                updates.append("updated_at = ?")
+                params.append(now.isoformat())
+                params.append(customization_id)
+                connection.execute(
+                    f"UPDATE customizations SET {', '.join(updates)} WHERE id = ?",
+                    params,
+                )
+
+            row = self._fetch_customization_row(connection, customization_id)
+            if row is None:
+                raise KeyError(f"Customization {customization_id} does not exist")
+
+        return self._row_to_customization_record(row)
+
+    def delete_customization(self, customization_id: int) -> bool:
+        """Remove the customization identified by *customization_id*."""
+
+        with self._storage.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM customizations WHERE id = ?",
+                (customization_id,),
+            )
+            return cursor.rowcount > 0
+
+    def create_asset_relationship(
+        self,
+        customization_id: int,
+        generated_asset_id: int,
+        relationship_type: str,
+    ) -> AssetRelationshipRecord:
+        """Create or refresh a relationship between customization and asset."""
+
+        normalized_type = self._normalize_relationship_type(relationship_type)
+        now = datetime.now(UTC)
+
+        with self._storage.connect() as connection:
+            customization_row = self._fetch_customization_row(connection, customization_id)
+            if customization_row is None:
+                raise KeyError(
+                    f"Customization {customization_id} does not exist"
+                )
+            base_asset_id = int(customization_row["base_asset_id"])
+
+            connection.execute(
+                """
+                INSERT INTO asset_relationships(
+                    base_asset_id,
+                    customization_id,
+                    generated_asset_id,
+                    relationship_type,
+                    created_at,
+                    updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?)
+                ON CONFLICT(customization_id, generated_asset_id, relationship_type)
+                DO UPDATE SET
+                    base_asset_id = excluded.base_asset_id,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    base_asset_id,
+                    customization_id,
+                    generated_asset_id,
+                    normalized_type,
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+
+            row = connection.execute(
+                """
+                SELECT * FROM asset_relationships
+                WHERE customization_id = ?
+                  AND generated_asset_id = ?
+                  AND relationship_type = ?
+                """,
+                (customization_id, generated_asset_id, normalized_type),
+            ).fetchone()
+
+        if row is None:  # pragma: no cover - defensive safeguard
+            raise RuntimeError("Failed to create asset relationship")
+        return self._row_to_relationship_record(row)
+
+    def list_relationships_for_base_asset(
+        self,
+        base_asset_id: int,
+        *,
+        relationship_type: str | None = None,
+    ) -> list[AssetRelationshipRecord]:
+        """Return relationship records for a given base asset."""
+
+        query = "SELECT * FROM asset_relationships WHERE base_asset_id = ?"
+        params: list[Any] = [base_asset_id]
+        if relationship_type is not None:
+            query += " AND relationship_type = ?"
+            params.append(self._normalize_relationship_type(relationship_type))
+        query += " ORDER BY created_at ASC"
+
+        with self._storage.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+
+        return [self._row_to_relationship_record(row) for row in rows]
+
+    def list_relationships_for_generated_asset(
+        self,
+        generated_asset_id: int,
+        *,
+        relationship_type: str | None = None,
+    ) -> list[AssetRelationshipRecord]:
+        """Return relationship records that reference *generated_asset_id*."""
+
+        query = "SELECT * FROM asset_relationships WHERE generated_asset_id = ?"
+        params: list[Any] = [generated_asset_id]
+        if relationship_type is not None:
+            query += " AND relationship_type = ?"
+            params.append(self._normalize_relationship_type(relationship_type))
+        query += " ORDER BY created_at ASC"
+
+        with self._storage.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+
+        return [self._row_to_relationship_record(row) for row in rows]
+
+    def delete_asset_relationship(self, relationship_id: int) -> bool:
+        """Delete a specific asset relationship by identifier."""
+
+        with self._storage.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM asset_relationships WHERE id = ?",
+                (relationship_id,),
+            )
+            return cursor.rowcount > 0
+
+    def list_derivatives_for_asset(
+        self,
+        base_asset_id: int,
+        *,
+        relationship_type: str | None = None,
+    ) -> list[AssetRecord]:
+        """Return derivative assets produced from *base_asset_id*."""
+
+        query = """
+            SELECT assets.*
+            FROM asset_relationships
+            JOIN assets ON assets.id = asset_relationships.generated_asset_id
+            WHERE asset_relationships.base_asset_id = ?
+        """
+        params: list[Any] = [base_asset_id]
+        if relationship_type is not None:
+            query += " AND asset_relationships.relationship_type = ?"
+            params.append(self._normalize_relationship_type(relationship_type))
+        query += " ORDER BY assets.path COLLATE NOCASE"
+
+        with self._storage.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+            return self._rows_to_records(connection, rows)
+
+    def get_base_for_derivative(
+        self,
+        generated_asset_id: int,
+        *,
+        relationship_type: str | None = None,
+    ) -> AssetRecord | None:
+        """Return the originating asset for a generated derivative."""
+
+        query = """
+            SELECT assets.*
+            FROM asset_relationships
+            JOIN assets ON assets.id = asset_relationships.base_asset_id
+            WHERE asset_relationships.generated_asset_id = ?
+        """
+        params: list[Any] = [generated_asset_id]
+        if relationship_type is not None:
+            query += " AND asset_relationships.relationship_type = ?"
+            params.append(self._normalize_relationship_type(relationship_type))
+        query += " ORDER BY asset_relationships.updated_at DESC LIMIT 1"
+
+        with self._storage.connect() as connection:
+            row = connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            tags = self._fetch_tags(connection, row["id"])
+        return self._row_to_record(row, tags)
+
+    # ------------------------------------------------------------------
     # Tag operations
     # ------------------------------------------------------------------
     def set_tags(self, asset_id: int, tags: Iterable[str]) -> list[str]:
@@ -414,6 +726,18 @@ class AssetRepository:
             raise ValueError("Asset path cannot be empty")
         return value
 
+    def _normalize_backend_identifier(self, backend: str) -> str:
+        value = str(backend).strip()
+        if not value:
+            raise ValueError("Backend identifier cannot be empty")
+        return value
+
+    def _normalize_relationship_type(self, relationship_type: str) -> str:
+        value = str(relationship_type).strip()
+        if not value:
+            raise ValueError("Relationship type cannot be empty")
+        return value
+
     def _normalize_tag(self, tag: str) -> str:
         value = str(tag).strip()
         if not value:
@@ -438,6 +762,14 @@ class AssetRepository:
             (asset_id,),
         ).fetchone()
 
+    def _fetch_customization_row(
+        self, connection: Connection, customization_id: int
+    ):
+        return connection.execute(
+            "SELECT * FROM customizations WHERE id = ?",
+            (customization_id,),
+        ).fetchone()
+
     def _fetch_tags(self, connection: Connection, asset_id: int) -> list[str]:
         rows = connection.execute(
             """
@@ -450,6 +782,14 @@ class AssetRepository:
             (asset_id,),
         ).fetchall()
         return [str(row["tag"]) for row in rows]
+
+    def _fetch_asset_relationship_row(
+        self, connection: Connection, relationship_id: int
+    ):
+        return connection.execute(
+            "SELECT * FROM asset_relationships WHERE id = ?",
+            (relationship_id,),
+        ).fetchone()
 
     def _rows_to_records(self, connection: Connection, rows) -> list[AssetRecord]:
         if not rows:
@@ -489,6 +829,34 @@ class AssetRepository:
             label=str(row["label"]),
             metadata=metadata,
             tags=list(tags),
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+    def _row_to_customization_record(self, row) -> CustomizationRecord:
+        parameter_schema = self._deserialize_metadata(row["parameter_schema"])
+        parameter_values = self._deserialize_metadata(row["parameter_values"])
+        created_at = datetime.fromisoformat(row["created_at"])
+        updated_at = datetime.fromisoformat(row["updated_at"])
+        return CustomizationRecord(
+            id=row["id"],
+            base_asset_id=row["base_asset_id"],
+            backend_identifier=str(row["backend_identifier"]),
+            parameter_schema=parameter_schema,
+            parameter_values=parameter_values,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+    def _row_to_relationship_record(self, row) -> AssetRelationshipRecord:
+        created_at = datetime.fromisoformat(row["created_at"])
+        updated_at = datetime.fromisoformat(row["updated_at"])
+        return AssetRelationshipRecord(
+            id=row["id"],
+            base_asset_id=row["base_asset_id"],
+            customization_id=row["customization_id"],
+            generated_asset_id=row["generated_asset_id"],
+            relationship_type=str(row["relationship_type"]),
             created_at=created_at,
             updated_at=updated_at,
         )
