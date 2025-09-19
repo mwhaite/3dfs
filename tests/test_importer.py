@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from three_dfs.config import configure
 from three_dfs.importer import (
     AssetImportError,
     UnsupportedAssetTypeError,
@@ -49,6 +50,23 @@ def sample_step_path() -> Path:
     """Return the path to the bundled sample STEP asset."""
 
     return Path(__file__).parent / "fixtures" / "sample_block.step"
+
+
+def test_importer_uses_configured_library_root(
+    asset_service: AssetService,
+    sample_stl_path: Path,
+    tmp_path: Path,
+) -> None:
+    """Importer should default to the configured library location."""
+
+    library_root = tmp_path / "library"
+    configure(library_root=library_root)
+
+    record = import_asset(sample_stl_path, service=asset_service)
+
+    managed_path = Path(record.metadata["managed_path"])
+    assert managed_path.parent == library_root
+    assert Path(record.path) == managed_path
 
 
 def test_importer_registers_supported_asset(

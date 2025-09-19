@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import Final
 
 from PySide6.QtCore import Qt
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .config import get_config
 from .data import TagStore
 from .storage import AssetService
 from .ui import PreviewPane, TagSidebar
@@ -39,8 +39,9 @@ class MainWindow(QMainWindow):
         self._repository_list.setObjectName("repositoryList")
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
 
+        config = get_config()
         self._preview_pane = PreviewPane(
-            base_path=Path.cwd(),
+            base_path=config.library_root,
             asset_service=self._asset_service,
             parent=self,
         )
