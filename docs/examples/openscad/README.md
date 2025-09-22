@@ -39,3 +39,17 @@ A demonstration part that highlights a variety of customizer controls:
 
 The generated bracket occupies the positive X/Y quadrant with the inside corner
 at the origin, making it easy to position in downstream assemblies.
+
+## `make_runners.scad`
+
+Generates runner plates that bundle the parts of an assembly into old-school
+sprued frames:
+
+- Choose from common FDM build plate presets (Prusa MK3, Bambu X1, Voron 300,
+  etc.) or supply custom dimensions.
+- Automatically group components by material and, optionally, colour so each
+  plate can be printed in a dedicated filament or resin.
+- Lay out parts with configurable margins and spacing, generate a primary sprue
+  and per-part gates, and add labels for both the plate and individual parts.
+- Preview every plate at once or focus on a single grouping when exporting an
+  STL for printing.
