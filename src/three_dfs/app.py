@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction
 
+from .assembly import discover_arrangement_scripts
 from .config import get_config
 from .importer import SUPPORTED_EXTENSIONS
 from .data import TagStore
@@ -554,11 +555,42 @@ class MainWindow(QMainWindow):
                 components.append((path, label))
                 kinds.append(kind)
 
-        from .ui.assembly_pane import AssemblyComponent
+        from .ui.assembly_pane import AssemblyArrangement, AssemblyComponent
         comp_objs = [
             AssemblyComponent(path=p, label=l, kind=(k if k in ("component", "placeholder") else "component"))
             for (p, l), k in zip(components, kinds, strict=False)
         ]
+        arr_objs = []
+        for entry in meta.get("arrangements") or []:
+            if not isinstance(entry, dict):
+                continue
+            raw_path = entry.get("path")
+            path = str(raw_path or "").strip()
+            if not path:
+                continue
+            raw_label = entry.get("label")
+            label = str(raw_label).strip() if raw_label is not None else ""
+            if not label:
+                label = Path(path).stem
+            raw_description = entry.get("description")
+            description = (
+                str(raw_description).strip() if raw_description is not None else None
+            )
+            if description == "":
+                description = None
+            rel_path = entry.get("rel_path")
+            rel_str = str(rel_path).strip() if isinstance(rel_path, str) else None
+            metadata_entry = entry.get("metadata")
+            metadata_dict = metadata_entry if isinstance(metadata_entry, dict) else None
+            arr_objs.append(
+                AssemblyArrangement(
+                    path=path,
+                    label=label,
+                    description=description,
+                    rel_path=rel_str or None,
+                    metadata=metadata_dict,
+                )
+            )
         atts_raw = meta.get("attachments") or []
         att_objs = []
         for a in atts_raw:
@@ -574,6 +606,7 @@ class MainWindow(QMainWindow):
             asset.path,
             label=asset.label,
             components=comp_objs,
+            arrangements=arr_objs,
             attachments=att_objs,
         )
         self._detail_stack.setCurrentWidget(self._assembly_pane)
@@ -671,12 +704,21 @@ class MainWindow(QMainWindow):
 
         # Create or update an asset record representing the assembly (path = folder)
         existing = self._asset_service.get_asset_by_path(str(folder))
-        preserved_attachments = []
+        preserved_attachments: list[dict] = []
+        preserved_arrangements: list[dict] = []
         if existing is not None:
             try:
                 preserved_attachments = list((existing.metadata or {}).get("attachments") or [])
             except Exception:
                 preserved_attachments = []
+            try:
+                preserved_arrangements = list((existing.metadata or {}).get("arrangements") or [])
+            except Exception:
+                preserved_arrangements = []
+        try:
+            arrangements = discover_arrangement_scripts(folder, preserved_arrangements)
+        except Exception:
+            arrangements = [dict(entry) for entry in preserved_arrangements]
         metadata = {
             "kind": "assembly",
             "components": components,
@@ -684,6 +726,8 @@ class MainWindow(QMainWindow):
         }
         if preserved_attachments:
             metadata["attachments"] = preserved_attachments
+        if arrangements:
+            metadata["arrangements"] = arrangements
         if existing is None:
             self._asset_service.create_asset(
                 str(folder),

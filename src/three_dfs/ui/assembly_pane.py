@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from PySide6.QtCore import Qt, Slot, Signal, QSize
 from PySide6.QtGui import (
@@ -43,6 +43,15 @@ class AssemblyComponent:
     path: str
     label: str
     kind: str = "component"  # "component" or "attachment"
+
+
+@dataclass(slots=True)
+class AssemblyArrangement:
+    path: str
+    label: str
+    description: str | None = None
+    rel_path: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class AssemblyPane(QWidget):
@@ -140,6 +149,7 @@ class AssemblyPane(QWidget):
         *,
         label: str,
         components: Iterable[AssemblyComponent],
+        arrangements: Iterable[AssemblyArrangement] = (),
         attachments: Iterable[AssemblyComponent] = (),
     ) -> None:
         self._assembly_path = path
@@ -152,6 +162,7 @@ class AssemblyPane(QWidget):
         self._components.clear()
         self._search.clear()
         comp_paths: list[str] = []
+        arrangement_paths: list[str] = []
         attach_paths: list[str] = []
         for comp in components:
             item = QListWidgetItem(comp.label or comp.path)
@@ -163,6 +174,29 @@ class AssemblyPane(QWidget):
             self._components.addItem(item)
             if comp.kind == "component":
                 comp_paths.append(comp.path)
+
+        arrangements = list(arrangements)
+        if arrangements:
+            header = QListWidgetItem("Arrangements")
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+            header.setFlags(Qt.ItemIsEnabled)
+            self._components.addItem(header)
+            for arrangement in arrangements:
+                display = arrangement.label or arrangement.path
+                item = QListWidgetItem(display)
+                item.setData(Qt.UserRole, arrangement.path)
+                item.setData(Qt.UserRole + 1, "arrangement")
+                tooltip_parts = []
+                if arrangement.description:
+                    tooltip_parts.append(str(arrangement.description))
+                if arrangement.rel_path:
+                    tooltip_parts.append(str(arrangement.rel_path))
+                tooltip_parts.append(arrangement.path)
+                item.setToolTip("\n".join(part for part in tooltip_parts if part))
+                self._components.addItem(item)
+                arrangement_paths.append(arrangement.path)
 
         attachments = list(attachments)
         if attachments:
@@ -181,8 +215,8 @@ class AssemblyPane(QWidget):
                 attach_paths.append(att.path)
 
         # Queue thumbnail icon generation for parts
-        if comp_paths or attach_paths:
-            self._enqueue_icons(comp_paths, attach_paths)
+        if comp_paths or attach_paths or arrangement_paths:
+            self._enqueue_icons(comp_paths, attach_paths + arrangement_paths)
         # Load README for the assembly folder
         self._load_readme(Path(path))
 
@@ -496,6 +530,8 @@ class _IconWorker(QRunnable):
             return ("XLS", (16, 124, 16))
         if s in {".py", ".sh", ".js", ".ts"}:
             return (s.lstrip(".").upper(), (120, 80, 180))
+        if s == ".scad":
+            return ("SCAD", (186, 109, 42))
         # Unknown file type
         if c and not c.startswith("image/"):
             return (c.split("/")[-1][:4].upper(), (110, 110, 110))
