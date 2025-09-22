@@ -12,8 +12,10 @@ __all__ = [
     "GeneratedArtifact",
     "CustomizerSession",
     "CustomizerBackend",
+    "CustomizationStatus",
     "ArtifactResult",
     "PipelineResult",
+    "evaluate_customization_status",
     "execute_customization",
 ]
 
@@ -201,7 +203,8 @@ class CustomizerBackend(Protocol):
         """Return a :class:`CustomizerSession` describing the build plan."""
 
 
-from .pipeline import ArtifactResult, PipelineResult, execute_customization
+from .pipeline import ArtifactResult, PipelineResult, execute_customization  # noqa: E402,I001
+from .status import CustomizationStatus, evaluate_customization_status  # noqa: E402,I001
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing helpers

@@ -253,6 +253,13 @@ def _build_asset_metadata(
     session_metadata: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     generated_at = datetime.now(UTC).isoformat()
+    try:
+        source_modified_at = datetime.fromtimestamp(
+            source_path.stat().st_mtime,
+            tz=UTC,
+        ).isoformat()
+    except OSError:
+        source_modified_at = None
     metadata: dict[str, Any] = {
         "source": base_asset.path,
         "source_type": "customization",
@@ -270,6 +277,8 @@ def _build_asset_metadata(
         "backend": backend_identifier,
         "base_asset_id": base_asset.id,
         "base_asset_path": base_asset.path,
+        "base_asset_label": base_asset.label,
+        "base_asset_updated_at": base_asset.updated_at.isoformat(),
         "relationship": artifact.relationship,
         "parameters": dict(customization.parameter_values),
         "command": list(command),
@@ -280,6 +289,9 @@ def _build_asset_metadata(
 
     if _is_preview_artifact(artifact, destination):
         customization_meta["is_preview"] = True
+
+    if source_modified_at is not None:
+        customization_meta["source_modified_at"] = source_modified_at
 
     metadata["customization"] = customization_meta
     return metadata
