@@ -20,20 +20,24 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QSizePolicy,
-    QTabWidget,
     QStackedLayout,
-    QVBoxLayout,
+    QTabWidget,
     QTextEdit,
+    QVBoxLayout,
     QWidget,
 )
 
+from ..customizer.openscad import OpenSCADBackend
+from ..customizer.status import (
+    CustomizationStatus,
+    evaluate_customization_status,
+)
 from ..thumbnails import (
     DEFAULT_THUMBNAIL_SIZE,
     ThumbnailCache,
     ThumbnailGenerationError,
     ThumbnailResult,
 )
-from ..customizer.openscad import OpenSCADBackend
 from .customizer_panel import CustomizerPanel
 from .model_viewer import ModelViewer
 
@@ -606,6 +610,15 @@ def _build_preview_outcome(
 
     suffix = path.suffix.lower()
 
+    if suffix == ".scad":
+        metadata.extend(
+            _build_customizer_metadata_for_source(
+                path,
+                asset_record,
+                asset_service,
+            )
+        )
+
     if suffix in _IMAGE_EXTENSIONS:
         image_metadata, thumbnail_bytes = _build_image_preview(path)
         metadata.extend(image_metadata)
@@ -649,6 +662,108 @@ def _build_preview_outcome(
     )
 
 
+def _build_customizer_metadata_for_source(
+    source_path: Path,
+    asset_record: AssetRecord | None,
+    asset_service: AssetService | None,
+) -> list[tuple[str, str]]:
+    if asset_service is None or asset_record is None:
+        return []
+
+    try:
+        derivatives = asset_service.list_derivatives_for_asset(asset_record.path)
+    except Exception:
+        return []
+
+    entries: list[tuple[str, str]] = []
+    if not derivatives:
+        return [("Customized Outputs", "No customized artifacts recorded yet.")]
+
+    for derivative in derivatives:
+        label = derivative.label or Path(derivative.path).name
+        customization_meta = derivative.metadata.get("customization")
+        status_text = "Metadata unavailable."
+        if isinstance(customization_meta, Mapping):
+            status = evaluate_customization_status(
+                customization_meta,
+                base_path=source_path,
+            )
+            status_text = _format_customization_status(status)
+        entries.append(("Customized Output", f"{label} - {status_text}"))
+
+    return entries
+
+
+def _format_customizer_source(
+    base_asset: AssetRecord | None,
+    status: CustomizationStatus,
+    customization_metadata: Mapping[str, Any],
+) -> str:
+    label = None
+    if base_asset is not None and base_asset.label:
+        label = base_asset.label
+    else:
+        candidate = customization_metadata.get("base_asset_label")
+        if isinstance(candidate, str) and candidate.strip():
+            label = candidate.strip()
+
+    path_text = None
+    if status.base_path is not None:
+        path_text = str(status.base_path)
+    else:
+        candidate_path = customization_metadata.get("base_asset_path")
+        if isinstance(candidate_path, str) and candidate_path.strip():
+            path_text = candidate_path.strip()
+
+    if label and path_text:
+        return f"{label} ({path_text})"
+    if label:
+        return label
+    if path_text:
+        return path_text
+    return "Unknown source"
+
+
+def _format_customization_status(status: CustomizationStatus) -> str:
+    if status.is_outdated:
+        if status.current_source_mtime is not None:
+            return (
+                "Out of date (source updated "
+                f"{_format_datetime(status.current_source_mtime)})"
+            )
+        return "Out of date (source unavailable)"
+
+    if status.reason == "In sync with base source." and status.recorded_source_mtime:
+        return (
+            "In sync (source timestamp "
+            f"{_format_datetime(status.recorded_source_mtime)})"
+        )
+
+    return status.reason
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _format_datetime(value: datetime) -> str:
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return _format_timestamp(aware.timestamp())
+
+
 def _build_image_preview(path: Path) -> tuple[list[tuple[str, str]], bytes]:
     with Image.open(path) as img:
         image = ImageOps.exif_transpose(img)
@@ -678,7 +793,7 @@ def _extract_customizer_preview(
     previews = customization.get("previews")
     if isinstance(previews, Mapping):
         candidates = [previews]
-    elif isinstance(previews, Iterable) and not isinstance(previews, (str, bytes)):
+    elif isinstance(previews, Iterable) and not isinstance(previews, str | bytes):
         candidates = [item for item in previews if isinstance(item, Mapping)]
     else:
         return None
@@ -741,6 +856,36 @@ def _build_model_preview(
 
     thumbnail_result: ThumbnailResult | None = None
     updated_asset = asset_record
+
+    base_asset: AssetRecord | None = None
+    if asset_service is not None and asset_record is not None:
+        try:
+            base_asset = asset_service.get_base_for_derivative(asset_record.path)
+        except Exception:
+            base_asset = None
+
+    customization_metadata: Mapping[str, Any] | None = None
+    if isinstance(asset_metadata, Mapping):
+        candidate = asset_metadata.get("customization")
+        if isinstance(candidate, Mapping):
+            customization_metadata = candidate
+
+    if customization_metadata is not None:
+        status = evaluate_customization_status(
+            customization_metadata,
+            base_path=base_asset.path if base_asset is not None else None,
+        )
+        source_display = _format_customizer_source(
+            base_asset,
+            status,
+            customization_metadata,
+        )
+        metadata.append(("Customizer Source", source_display))
+        metadata.append(("Customizer Status", _format_customization_status(status)))
+
+        generated_at = _parse_iso_datetime(customization_metadata.get("generated_at"))
+        if generated_at is not None:
+            metadata.append(("Customized On", _format_datetime(generated_at)))
 
     custom_preview = _extract_customizer_preview(asset_metadata)
     if custom_preview is not None:

@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
 from three_dfs.customizer import (
+    CustomizerBackend,
+    CustomizerSession,
     GeneratedArtifact,
     ParameterDescriptor,
     ParameterSchema,
     execute_customization,
 )
-from three_dfs.customizer import CustomizerBackend
 from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
-
 
 _MINIMAL_PNG = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
@@ -36,7 +38,10 @@ class StubBackend(CustomizerBackend):
             default=1.0,
             description="Size multiplier",
         )
-        return ParameterSchema(parameters=(descriptor,), metadata={"source": str(source)})
+        return ParameterSchema(
+            parameters=(descriptor,),
+            metadata={"source": str(source)},
+        )
 
     def validate(
         self,
@@ -59,9 +64,7 @@ class StubBackend(CustomizerBackend):
         asset_service: AssetService | None = None,
         execute: bool = False,
         metadata: Mapping[str, Any] | None = None,
-    ) -> "CustomizerSession":
-        from three_dfs.customizer import CustomizerSession
-
+    ) -> CustomizerSession:
         normalized = self.validate(schema, values)
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -108,7 +111,10 @@ def asset_service(tmp_path: Path) -> AssetService:
     return AssetService(repository)
 
 
-def test_execute_customization_registers_artifacts(tmp_path: Path, asset_service: AssetService) -> None:
+def test_execute_customization_registers_artifacts(
+    tmp_path: Path,
+    asset_service: AssetService,
+) -> None:
     backend = StubBackend()
 
     base_source = tmp_path / "sources" / "base.scad"
@@ -157,9 +163,22 @@ def test_execute_customization_registers_artifacts(tmp_path: Path, asset_service
     assert customization_meta["id"] == result.customization.id
     assert customization_meta["parameters"] == {"size": 2.0}
     assert customization_meta["relationship"] == "output"
+    assert customization_meta["base_asset_label"] == base_asset.label
+    assert (
+        customization_meta["base_asset_updated_at"]
+        == base_asset.updated_at.isoformat()
+    )
+
+    recorded_source = customization_meta.get("source_modified_at")
+    assert isinstance(recorded_source, str)
+    recorded_dt = datetime.fromisoformat(recorded_source)
+    expected_dt = datetime.fromtimestamp(base_source.stat().st_mtime, tz=UTC)
+    assert recorded_dt == expected_dt
 
     previews = customization_meta.get("previews", [])
-    assert previews and any(entry["asset_id"] == preview_result.asset.id for entry in previews)
+    assert previews and any(
+        entry["asset_id"] == preview_result.asset.id for entry in previews
+    )
 
     preview_metadata = preview_result.asset.metadata["customization"]
     assert preview_metadata["is_preview"] is True
@@ -169,7 +188,8 @@ def test_execute_customization_registers_artifacts(tmp_path: Path, asset_service
         base_asset.id
     )
     mapping = {
-        (relation.generated_asset_id, relation.relationship_type) for relation in relationships
+        (relation.generated_asset_id, relation.relationship_type)
+        for relation in relationships
     }
     assert mapping == {
         (output_result.asset.id, "output"),
