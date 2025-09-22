@@ -56,6 +56,13 @@ code will be layered onto this foundation in subsequent milestones.
   index 3D files under the current library root and prune entries for files
   that were deleted on disk. Supported formats are those listed by the importer
   (e.g., `.stl`, `.obj`, `.step`, `.stp`).
+- Assembly arrangements: Place OpenSCAD scripts inside an assembly folder's
+  `arrangements/` (or `_arrangements/`) directory to register reusable layouts
+  for the parts list. These arrangements appear alongside the component list in
+  the assembly pane and can be previewed just like other assets. Existing
+  assembly-level models remain supported as attachments, but without an
+  arrangement script they will not automatically synchronise with the component
+  breakdown.
 
 ## Import plugins
 
