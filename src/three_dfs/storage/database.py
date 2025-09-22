@@ -64,6 +64,32 @@ CREATE INDEX IF NOT EXISTS idx_asset_relationships_generated_asset_id
     ON asset_relationships(generated_asset_id);
 CREATE INDEX IF NOT EXISTS idx_asset_relationships_relationship_type
     ON asset_relationships(relationship_type);
+
+-- Assemblies: collections of assets/components
+CREATE TABLE IF NOT EXISTS assemblies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS assembly_components (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assembly_id INTEGER NOT NULL REFERENCES assemblies(id) ON DELETE CASCADE,
+    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    order_index INTEGER NOT NULL DEFAULT 0,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(assembly_id, asset_id, order_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assembly_components_assembly_id
+    ON assembly_components(assembly_id);
+CREATE INDEX IF NOT EXISTS idx_assembly_components_asset_id
+    ON assembly_components(asset_id);
 """
 
 

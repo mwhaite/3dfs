@@ -20,8 +20,10 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QSizePolicy,
+    QTabWidget,
     QStackedLayout,
     QVBoxLayout,
+    QTextEdit,
     QWidget,
 )
 
@@ -31,6 +33,7 @@ from ..thumbnails import (
     ThumbnailGenerationError,
     ThumbnailResult,
 )
+from .model_viewer import ModelViewer
 
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
     from ..storage import AssetRecord, AssetService
@@ -117,7 +120,7 @@ class PreviewWorker(QRunnable):
         try:
             outcome = _build_preview_outcome(
                 self._path,
-                metadata=self._metadata,
+                asset_metadata=self._metadata,
                 asset_service=self._asset_service,
                 asset_record=self._asset_record,
                 thumbnail_cache=self._thumbnail_cache,
@@ -186,6 +189,21 @@ class PreviewPane(QWidget):
             QSizePolicy.Expanding, QSizePolicy.Expanding
         )
 
+        # Viewer tab: allow switching between Thumbnail and 3D Viewer
+        self._viewer = ModelViewer(self)
+        self._viewer.setMinimumHeight(220)
+        self._tabs = QTabWidget(self)
+        self._tabs.setObjectName("previewTabs")
+        thumb_container = QWidget(self)
+        thumb_layout = QVBoxLayout(thumb_container)
+        thumb_layout.setContentsMargins(0, 0, 0, 0)
+        thumb_layout.addWidget(self._thumbnail_label)
+        self._tabs.addTab(thumb_container, "Thumbnail")
+        self._tabs.addTab(self._viewer, "3D Viewer")
+        self._readme_view = QTextEdit(self)
+        self._readme_view.setReadOnly(True)
+        self._tabs.addTab(self._readme_view, "README")
+
         self._metadata_title = QLabel("File details", self)
         self._metadata_title.setObjectName("previewMetadataTitle")
 
@@ -207,7 +225,7 @@ class PreviewPane(QWidget):
         preview_layout = QVBoxLayout(self._preview_container)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(6)
-        preview_layout.addWidget(self._thumbnail_label, 3)
+        preview_layout.addWidget(self._tabs, 3)
         preview_layout.addWidget(self._metadata_title)
         preview_layout.addWidget(self._metadata_list, 2)
         self._stack.addWidget(self._preview_container)
@@ -283,8 +301,60 @@ class PreviewPane(QWidget):
         self._current_thumbnail_message = None
         self._thumbnail_label.setToolTip("")
 
+        # Prepare viewer tab
+        suffix = absolute_path.suffix.lower()
+        if suffix in _MODEL_EXTENSIONS:
+            try:
+                self._viewer.set_path(absolute_path)
+                self._tabs.setTabEnabled(1, True)
+            except Exception:
+                self._tabs.setTabEnabled(1, False)
+        else:
+            self._tabs.setCurrentIndex(0)
+            self._tabs.setTabEnabled(1, False)
+
+        # Load README tab from the asset's folder if present
+        if self._load_readme_for(absolute_path):
+            self._tabs.setTabEnabled(2, True)
+        else:
+            self._tabs.setTabEnabled(2, False)
+
         self._show_message(f"Loading preview for {display_label}…")
         self._enqueue_preview(absolute_path)
+
+    def _load_readme_for(self, path: Path) -> bool:
+        base_dir = path if path.is_dir() else path.parent
+        allowed = {"", ".md", ".markdown", ".txt", ".rst"}
+        candidates = []
+        try:
+            for entry in base_dir.iterdir():
+                try:
+                    if not entry.is_file():
+                        continue
+                    stem = entry.stem.lower()
+                    suffix = entry.suffix.lower()
+                except Exception:
+                    continue
+                if suffix in allowed:
+                    score = 0 if "readme" in stem else 1
+                    candidates.append((score, entry.name.lower(), entry))
+            if candidates:
+                candidates.sort()
+                chosen = candidates[0][2]
+                try:
+                    content = chosen.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    content = ""
+                if content:
+                    try:
+                        self._readme_view.setMarkdown(content)
+                    except Exception:
+                        self._readme_view.setPlainText(content)
+                    return True
+        except Exception:
+            pass
+        self._readme_view.clear()
+        return False
 
     # ------------------------------------------------------------------
     # QWidget overrides
@@ -648,6 +718,20 @@ def _build_model_preview(
                 metadata=asset_metadata,
                 size=size,
             )
+        except TypeError as exc:
+            # Backward-compat: older cache implementations may not accept
+            # the "metadata" keyword. Retry without it.
+            if "metadata" in str(exc):
+                try:
+                    thumbnail_result = cache.get_or_render(
+                        path,
+                        existing_info=existing_info,
+                        size=size,
+                    )
+                except ThumbnailGenerationError:
+                    thumbnail_result = None
+            else:
+                raise
         except ThumbnailGenerationError:
             thumbnail_result = None
 

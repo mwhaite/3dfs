@@ -362,28 +362,41 @@ class ThumbnailCache:
         signature: str,
         size: tuple[int, int],
     ) -> bool:
-        if info is None:
-            return False
-
-        stored_hash = info.get("source_hash")
-        stored_path = info.get("path")
-        stored_size = info.get("size")
-
-        if stored_hash != signature:
-            return False
-
-        if list(map(int, stored_size or [])) != [int(size[0]), int(size[1])]:
-            return False
-
-        if not stored_path:
-            return False
-
+        # Be defensive: if the structure is unexpected, treat as non-matching.
         try:
-            resolved = Path(str(stored_path)).expanduser().resolve(strict=False)
-        except OSError:
-            return False
+            if info is None:
+                return False
 
-        return resolved == cache_path.resolve(strict=False)
+            stored_hash = info.get("source_hash")
+            stored_path = info.get("path")
+            stored_size = info.get("size")
+
+            if stored_hash != signature:
+                return False
+
+            # Accept either a 2-sequence of ints or strings that can be coerced.
+            size_list = list(stored_size or [])
+            if len(size_list) != 2:
+                return False
+            try:
+                width = int(size_list[0])
+                height = int(size_list[1])
+            except (TypeError, ValueError):
+                return False
+            if [width, height] != [int(size[0]), int(size[1])]:
+                return False
+
+            if not stored_path:
+                return False
+
+            try:
+                resolved = Path(str(stored_path)).expanduser().resolve(strict=False)
+            except Exception:
+                return False
+
+            return resolved == cache_path.resolve(strict=False)
+        except Exception:
+            return False
 
     def _build_info(
         self,
@@ -420,13 +433,22 @@ class ThumbnailManager:
         source_path = self._resolve_source_path(asset)
         metadata = getattr(asset, "metadata", {}) or {}
         existing = metadata.get("thumbnail") if isinstance(metadata, Mapping) else None
-
-        return self._cache.get_or_render(
-            source_path,
-            existing_info=existing if isinstance(existing, Mapping) else None,
-            metadata=metadata if isinstance(metadata, Mapping) else None,
-            size=size,
-        )
+        try:
+            return self._cache.get_or_render(
+                source_path,
+                existing_info=existing if isinstance(existing, Mapping) else None,
+                metadata=metadata if isinstance(metadata, Mapping) else None,
+                size=size,
+            )
+        except TypeError as exc:
+            # Backward-compat: tolerate caches without a "metadata" parameter.
+            if "metadata" in str(exc):
+                return self._cache.get_or_render(
+                    source_path,
+                    existing_info=existing if isinstance(existing, Mapping) else None,
+                    size=size,
+                )
+            raise
 
     def _resolve_source_path(self, asset: AssetRecord) -> Path:
         metadata = getattr(asset, "metadata", {}) or {}

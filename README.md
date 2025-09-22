@@ -7,12 +7,15 @@ standards documentation.
 
 ## Getting Started
 
-1. Install the project dependencies using [Hatch](https://hatch.pypa.io/):
+1. Quick setup and launch:
 
    ```bash
-   pip install hatch
-   hatch env create
+   ./setup.sh
    ```
+
+   This creates `.venv`, installs tools, and runs the app. To keep an
+   activated shell after the app exits, use `./setup.sh --activate` or
+   run `source setup.sh`.
 
 2. Run the automated checks:
 
@@ -37,6 +40,22 @@ standards documentation.
 
 Additional design documents, architectural notes, and implementation
 code will be layered onto this foundation in subsequent milestones.
+
+## Configuration
+
+- Library root: By default, assets are managed under `~/Models`. Override with
+  `THREE_DFS_LIBRARY_PATH` (e.g., `export THREE_DFS_LIBRARY_PATH=~/MyModels`).
+- Demo entries: The UI no longer auto-seeds demo items. To populate sample
+  entries for exploration, set `THREE_DFS_BOOTSTRAP_DEMO=1` before launching.
+- Database: Repository state is persisted to `~/.3dfs/assets.sqlite3`. Remove
+  this file to reset the repository state (closes the app first).
+
+## Usage Tips
+
+- Rescan Library: Use the “File → Rescan Library” action (or press `F5`) to
+  index 3D files under the current library root and prune entries for files
+  that were deleted on disk. Supported formats are those listed by the importer
+  (e.g., `.stl`, `.obj`, `.step`, `.stp`).
 
 ## Import plugins
 
@@ -105,4 +124,3 @@ print(f"Created plugin skeleton at {module_path}")
 The generated module contains TODO markers for authentication, scraping, and
 metadata mapping. Fill in those hooks, ensure the plugin returns the fetched
 asset in a supported format, and register it with the global registry.
-
