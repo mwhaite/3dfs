@@ -33,6 +33,8 @@ from ..thumbnails import (
     ThumbnailGenerationError,
     ThumbnailResult,
 )
+from ..customizer.openscad import OpenSCADBackend
+from .customizer_panel import CustomizerPanel
 from .model_viewer import ModelViewer
 
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
@@ -198,11 +200,22 @@ class PreviewPane(QWidget):
         thumb_layout = QVBoxLayout(thumb_container)
         thumb_layout.setContentsMargins(0, 0, 0, 0)
         thumb_layout.addWidget(self._thumbnail_label)
-        self._tabs.addTab(thumb_container, "Thumbnail")
-        self._tabs.addTab(self._viewer, "3D Viewer")
+        self._thumbnail_tab_index = self._tabs.addTab(thumb_container, "Thumbnail")
+        self._viewer_tab_index = self._tabs.addTab(self._viewer, "3D Viewer")
         self._readme_view = QTextEdit(self)
         self._readme_view.setReadOnly(True)
-        self._tabs.addTab(self._readme_view, "README")
+        self._readme_tab_index = self._tabs.addTab(self._readme_view, "README")
+        self._customizer_panel = CustomizerPanel(
+            asset_service=self._asset_service,
+            parent=self,
+        )
+        self._customizer_tab_index = self._tabs.addTab(
+            self._customizer_panel,
+            "Customizer",
+        )
+        self._tabs.setTabEnabled(self._viewer_tab_index, False)
+        self._tabs.setTabEnabled(self._readme_tab_index, False)
+        self._tabs.setTabEnabled(self._customizer_tab_index, False)
 
         self._metadata_title = QLabel("File details", self)
         self._metadata_title.setObjectName("previewMetadataTitle")
@@ -260,6 +273,10 @@ class PreviewPane(QWidget):
         self._description_label.setVisible(False)
         self._metadata_list.clear()
         self._thumbnail_label.setToolTip("")
+        self._tabs.setTabEnabled(self._viewer_tab_index, False)
+        self._tabs.setTabEnabled(self._readme_tab_index, False)
+        self._tabs.setTabEnabled(self._customizer_tab_index, False)
+        self._customizer_panel.clear()
         self._show_message("Select an item to preview")
 
     def set_item(
@@ -306,21 +323,22 @@ class PreviewPane(QWidget):
         if suffix in _MODEL_EXTENSIONS:
             try:
                 self._viewer.set_path(absolute_path)
-                self._tabs.setTabEnabled(1, True)
+                self._tabs.setTabEnabled(self._viewer_tab_index, True)
             except Exception:
-                self._tabs.setTabEnabled(1, False)
+                self._tabs.setTabEnabled(self._viewer_tab_index, False)
         else:
             self._tabs.setCurrentIndex(0)
-            self._tabs.setTabEnabled(1, False)
+            self._tabs.setTabEnabled(self._viewer_tab_index, False)
 
         # Load README tab from the asset's folder if present
         if self._load_readme_for(absolute_path):
-            self._tabs.setTabEnabled(2, True)
+            self._tabs.setTabEnabled(self._readme_tab_index, True)
         else:
-            self._tabs.setTabEnabled(2, False)
+            self._tabs.setTabEnabled(self._readme_tab_index, False)
 
         self._show_message(f"Loading preview for {display_label}…")
         self._enqueue_preview(absolute_path)
+        self._prepare_customizer(absolute_path)
 
     def _load_readme_for(self, path: Path) -> bool:
         base_dir = path if path.is_dir() else path.parent
@@ -395,6 +413,42 @@ class PreviewPane(QWidget):
         worker.signals.error.connect(self._handle_worker_error)
         self._workers[task_id] = worker
         self._thread_pool.start(worker)
+
+    def _prepare_customizer(self, absolute_path: Path) -> None:
+        self._tabs.setTabEnabled(self._customizer_tab_index, False)
+        self._customizer_panel.clear()
+
+        suffix = absolute_path.suffix.lower()
+        if suffix != ".scad":
+            return
+
+        backend = OpenSCADBackend()
+        try:
+            schema = backend.load_schema(absolute_path)
+        except Exception:
+            logger.exception("Failed to load OpenSCAD schema for %s", absolute_path)
+            return
+
+        if not schema.parameters:
+            return
+
+        values: Mapping[str, Any] | None = None
+        metadata = (
+            self._asset_metadata.get("customization") if self._asset_metadata else None
+        )
+        if isinstance(metadata, Mapping):
+            maybe_values = metadata.get("parameters")
+            if isinstance(maybe_values, Mapping):
+                values = maybe_values
+
+        self._customizer_panel.set_session(
+            backend=backend,
+            schema=schema,
+            source_path=absolute_path,
+            base_asset=self._asset_record,
+            values=values,
+        )
+        self._tabs.setTabEnabled(self._customizer_tab_index, True)
 
     def _show_message(self, text: str) -> None:
         self._message_label.setText(text)
