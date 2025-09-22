@@ -33,6 +33,11 @@ metadata, and constructs an `openscad` CLI invocation with the appropriate
 handled by the pipeline which records the parameter schema, normalised values,
 and all produced artefacts.
 
+Practical example sources live in `docs/examples/openscad/`.  They include a
+utility for embossing arbitrary STL files (`emboss_utility.scad`) and a
+demonstration corner bracket (`demo_parametric_bracket.scad`) that highlights a
+variety of parameter types available to the customizer.
+
 ## Adapting additional engines
 
 Extending the system to support another parametric modelling engine—such as a
