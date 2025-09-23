@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from .assembly_pane import AssemblyPane
 from .preview_pane import PreviewPane
 from .tag_sidebar import TagSidebar
-from .assembly_pane import AssemblyPane
 
-__all__ = ["PreviewPane", "TagSidebar"]
+__all__ = ["PreviewPane", "TagSidebar", "AssemblyPane"]

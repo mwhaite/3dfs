@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any
 
 __all__ = ["discover_arrangement_scripts"]
 
@@ -108,7 +109,11 @@ def _iter_arrangement_scripts(root: Path) -> Iterator[Path]:
 
     if root.exists():
         for entry in root.iterdir():
-            if entry.is_file() and entry.suffix.lower() == ".scad" and _looks_like_arrangement(entry):
+            if (
+                entry.is_file()
+                and entry.suffix.lower() == ".scad"
+                and _looks_like_arrangement(entry)
+            ):
                 yield entry
 
 

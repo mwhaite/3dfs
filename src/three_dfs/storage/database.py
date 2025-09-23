@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS asset_relationships (
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
 CREATE INDEX IF NOT EXISTS idx_asset_tag_links_tag_id ON asset_tag_links(tag_id);
 CREATE INDEX IF NOT EXISTS idx_asset_tag_links_asset_id ON asset_tag_links(asset_id);
-CREATE INDEX IF NOT EXISTS idx_customizations_base_asset_id ON customizations(base_asset_id);
+CREATE INDEX IF NOT EXISTS idx_customizations_base_asset_id
+    ON customizations(base_asset_id);
 CREATE INDEX IF NOT EXISTS idx_customizations_backend_identifier
     ON customizations(backend_identifier);
 CREATE INDEX IF NOT EXISTS idx_asset_relationships_base_asset_id

@@ -14,12 +14,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from three_dfs.config import configure
-
 
 @pytest.fixture(autouse=True)
 def reset_app_config() -> None:
     """Ensure each test runs with the default application configuration."""
+
+    from three_dfs.config import configure
 
     configure(library_root=None)
     yield

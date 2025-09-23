@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import mimetypes
 import shutil
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from ..importer import (
     _allocate_destination,
@@ -306,7 +307,14 @@ def _is_preview_artifact(artifact: GeneratedArtifact, destination: Path) -> bool
     if content_type.startswith("image/"):
         return True
 
-    return destination.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+    return destination.suffix.lower() in {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+    }
 
 
 def _build_preview_entries(results: Sequence[ArtifactResult]) -> list[dict[str, Any]]:
@@ -340,4 +348,3 @@ def _build_preview_entries(results: Sequence[ArtifactResult]) -> list[dict[str, 
 def _guess_content_type(path: str) -> str | None:
     mime_type, _ = mimetypes.guess_type(path)
     return mime_type
-

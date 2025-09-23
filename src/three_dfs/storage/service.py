@@ -2,21 +2,10 @@
 
 from __future__ import annotations
 
-
 import logging
-from pathlib import Path
-
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
-
-
-from .repository import (
-    AssetRecord,
-    AssetRelationshipRecord,
-    AssetRepository,
-    CustomizationRecord,
-)
 
 from ..thumbnails import (
     DEFAULT_THUMBNAIL_SIZE,
@@ -25,8 +14,12 @@ from ..thumbnails import (
     ThumbnailManager,
     ThumbnailResult,
 )
-
-
+from .repository import (
+    AssetRecord,
+    AssetRelationshipRecord,
+    AssetRepository,
+    CustomizationRecord,
+)
 
 __all__ = ["AssetSeed", "AssetService"]
 

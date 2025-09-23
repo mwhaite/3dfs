@@ -6,8 +6,9 @@ import ast
 import json
 import re
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from . import (
     CustomizerBackend,
@@ -84,7 +85,7 @@ class OpenSCADBackend(CustomizerBackend):
         values: Mapping[str, Any],
         *,
         output_dir: Path,
-        asset_service: "AssetService | None" = None,
+        asset_service: AssetService | None = None,
         execute: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> CustomizerSession:
@@ -181,7 +182,11 @@ class OpenSCADBackend(CustomizerBackend):
         match = _RANGE_PATTERN.match(body[1:-1] if body.startswith("[") else body)
         if match:
             first, second, third = match.groups()
-            convert = int if isinstance(default, int) and not isinstance(default, bool) else float
+            convert = (
+                int
+                if isinstance(default, int) and not isinstance(default, bool)
+                else float
+            )
             minimum = convert(float(first))
             if third is not None:
                 step = convert(float(second))
@@ -202,7 +207,7 @@ class OpenSCADBackend(CustomizerBackend):
             literal = ast.literal_eval(body)
         except Exception:
             literal = None
-        if isinstance(literal, (list, tuple)):
+        if isinstance(literal, list | tuple):
             choices = tuple(literal)
             coerced_default = default
             if choices and default not in choices:
@@ -252,17 +257,26 @@ class OpenSCADBackend(CustomizerBackend):
             elif lowered in {"false", "0", "no", "off"}:
                 result = False
             else:
-                raise ValueError(f"Invalid boolean value for {descriptor.name}: {value!r}")
+                raise ValueError(
+                    f"Invalid boolean value for {descriptor.name}: {value!r}"
+                )
         else:
             raise ValueError(f"Invalid boolean value for {descriptor.name}: {value!r}")
         return bool(result)
 
     def _normalize_number(self, descriptor: ParameterDescriptor, value: Any) -> Any:
-        target_type = int if isinstance(descriptor.default, int) and not isinstance(descriptor.default, bool) else float
+        target_type = (
+            int
+            if isinstance(descriptor.default, int)
+            and not isinstance(descriptor.default, bool)
+            else float
+        )
         try:
             converted = target_type(value)
         except (TypeError, ValueError):
-            raise ValueError(f"Invalid numeric value for {descriptor.name}: {value!r}") from None
+            raise ValueError(
+                f"Invalid numeric value for {descriptor.name}: {value!r}"
+            ) from None
 
         minimum = descriptor.minimum
         maximum = descriptor.maximum
@@ -284,12 +298,13 @@ class OpenSCADBackend(CustomizerBackend):
                 if isinstance(option, str) and option.lower() == value.lower():
                     return option
         raise ValueError(
-            f"Invalid choice for {descriptor.name}: {value!r}, expected one of {descriptor.choices}"
+            f"Invalid choice for {descriptor.name}: {value!r}, "
+            f"expected one of {descriptor.choices}"
         )
 
     def _format_override(self, value: Any) -> str:
         if isinstance(value, bool):
             return "true" if value else "false"
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             return str(value)
         return json.dumps(value)

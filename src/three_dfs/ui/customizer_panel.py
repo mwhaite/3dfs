@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -596,7 +597,10 @@ class CustomizerPanel(QWidget):
                 asset_service=self._asset_service,
             )
         except FileNotFoundError as exc:
-            message = "OpenSCAD executable not found. Ensure it is installed and available on the PATH."
+            message = (
+                "OpenSCAD executable not found. Ensure it is installed "
+                "and available on the PATH."
+            )
             details = str(exc).strip()
             if details:
                 message = f"{message} ({details})"

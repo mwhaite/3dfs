@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Protocol
 
 __all__ = [
     "ParameterDescriptor",
@@ -48,7 +49,7 @@ class ParameterDescriptor:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ParameterDescriptor":
+    def from_dict(cls, data: Mapping[str, Any]) -> ParameterDescriptor:
         """Hydrate a descriptor from :meth:`to_dict` payloads."""
 
         return cls(
@@ -79,12 +80,11 @@ class ParameterSchema:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ParameterSchema":
+    def from_dict(cls, data: Mapping[str, Any]) -> ParameterSchema:
         """Reconstruct a schema from :meth:`to_dict` output."""
 
         parameters = tuple(
-            ParameterDescriptor.from_dict(item)
-            for item in data.get("parameters", [])
+            ParameterDescriptor.from_dict(item) for item in data.get("parameters", [])
         )
         metadata = dict(data.get("metadata") or {})
         return cls(parameters=parameters, metadata=metadata)
@@ -112,7 +112,7 @@ class GeneratedArtifact:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "GeneratedArtifact":
+    def from_dict(cls, data: Mapping[str, Any]) -> GeneratedArtifact:
         """Hydrate an artifact instance from stored state."""
 
         return cls(
@@ -154,13 +154,12 @@ class CustomizerSession:
         data: Mapping[str, Any],
         *,
         session_id: int | None = None,
-    ) -> "CustomizerSession":
+    ) -> CustomizerSession:
         """Reconstruct a session from :meth:`to_dict` output."""
 
         schema_data = data.get("schema") or {}
         artifacts = tuple(
-            GeneratedArtifact.from_dict(item)
-            for item in data.get("artifacts", [])
+            GeneratedArtifact.from_dict(item) for item in data.get("artifacts", [])
         )
         command = tuple(str(item) for item in data.get("command", ()))
         return cls(
@@ -196,15 +195,22 @@ class CustomizerBackend(Protocol):
         values: Mapping[str, Any],
         *,
         output_dir: Path,
-        asset_service: "AssetService | None" = None,
+        asset_service: AssetService | None = None,
         execute: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> CustomizerSession:
         """Return a :class:`CustomizerSession` describing the build plan."""
 
 
-from .pipeline import ArtifactResult, PipelineResult, execute_customization  # noqa: E402,I001
-from .status import CustomizationStatus, evaluate_customization_status  # noqa: E402,I001
+from .pipeline import (  # noqa: E402,I001
+    ArtifactResult,
+    PipelineResult,
+    execute_customization,
+)  # noqa: E402,I001
+from .status import (  # noqa: E402,I001
+    CustomizationStatus,
+    evaluate_customization_status,
+)  # noqa: E402,I001
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing helpers

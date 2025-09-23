@@ -72,7 +72,7 @@ def import_asset(
     *,
     service: AssetService | None = None,
     storage_root: Path | str | None = None,
-) -> "AssetRecord":
+) -> AssetRecord:
     """Import the asset referenced by *path* into managed storage.
 
     Parameters
@@ -147,7 +147,7 @@ def _import_local_asset(
     managed_root: Path,
     *,
     service: AssetService | None,
-) -> "AssetRecord":
+) -> AssetRecord:
     extension = source.suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
         raise UnsupportedAssetTypeError(
@@ -179,7 +179,7 @@ def _import_remote_asset(
     *,
     service: AssetService | None,
     attempted_local_resolution: bool,
-) -> "AssetRecord":
+) -> AssetRecord:
     plugin = get_plugin_for(identifier)
     if plugin is None:
         if attempted_local_resolution:
@@ -243,15 +243,12 @@ def _import_remote_asset(
     if extension not in SUPPORTED_EXTENSIONS:
         final_path.unlink(missing_ok=True)
         raise UnsupportedAssetTypeError(
-            "Unsupported asset format "
-            f"'{extension or 'unknown'}' from import plugin"
+            "Unsupported asset format " f"'{extension or 'unknown'}' from import plugin"
         )
 
     plugin_label_value = plugin_metadata.get("label")
     plugin_label = str(plugin_label_value) if plugin_label_value is not None else None
-    plugin_identifier = (
-        f"{plugin.__class__.__module__}.{plugin.__class__.__qualname__}"
-    )
+    plugin_identifier = f"{plugin.__class__.__module__}.{plugin.__class__.__qualname__}"
 
     metadata = {
         "source": identifier,
@@ -299,7 +296,7 @@ def _persist_record(
     *,
     label: str,
     service: AssetService | None,
-) -> "AssetRecord":
+) -> AssetRecord:
     asset_service = service or _default_asset_service()
     try:
         record = asset_service.create_asset(
@@ -373,9 +370,7 @@ def _allocate_destination(storage_root: Path, filename: str) -> Path:
         counter += 1
 
 
-def _resolve_plugin_destination(
-    destination: Path, metadata: Mapping[str, Any]
-) -> Path:
+def _resolve_plugin_destination(destination: Path, metadata: Mapping[str, Any]) -> Path:
     managed_hint = metadata.get("managed_path")
     if managed_hint:
         candidate = Path(str(managed_hint))

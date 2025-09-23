@@ -2,34 +2,32 @@
 
 from __future__ import annotations
 
-import os
-import sys
-from typing import Final
-from pathlib import Path
 import mimetypes
+import os
 import shutil
+import sys
+from pathlib import Path
+from typing import Final
 
-from PySide6.QtCore import Qt, QTimer, QFileSystemWatcher
+from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QMenu,
-    QMenuBar,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenuBar,
     QSplitter,
-    QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QAction
 
 from .assembly import discover_arrangement_scripts
 from .config import get_config
-from .importer import SUPPORTED_EXTENSIONS
 from .data import TagStore
+from .importer import SUPPORTED_EXTENSIONS
 from .storage import AssetService
-from .ui import PreviewPane, TagSidebar, AssemblyPane
+from .ui import AssemblyPane, PreviewPane, TagSidebar
 
 WINDOW_TITLE: Final[str] = "3dfs"
 
@@ -49,7 +47,9 @@ class MainWindow(QMainWindow):
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
         # Right-click context menu on repository list
         self._repository_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self._repository_list.customContextMenuRequested.connect(self._show_repo_context_menu)
+        self._repository_list.customContextMenuRequested.connect(
+            self._show_repo_context_menu
+        )
 
         config = get_config()
         self._preview_pane = PreviewPane(
@@ -63,12 +63,18 @@ class MainWindow(QMainWindow):
         self._assembly_pane = AssemblyPane(self)
         self._assembly_pane.setObjectName("assemblyPane")
         # Wire assembly pane actions
-        self._assembly_pane.addAttachmentsRequested.connect(self._add_assembly_attachments)
-        self._assembly_pane.openFolderRequested.connect(self._open_current_assembly_folder)
+        self._assembly_pane.addAttachmentsRequested.connect(
+            self._add_assembly_attachments
+        )
+        self._assembly_pane.openFolderRequested.connect(
+            self._open_current_assembly_folder
+        )
         self._assembly_pane.openItemFolderRequested.connect(self._open_item_folder)
         self._assembly_pane.navigateUpRequested.connect(self._navigate_up_assembly)
         self._assembly_pane.navigateToPathRequested.connect(self._navigate_to_path)
-        self._assembly_pane.filesDropped.connect(self._add_assembly_attachments_from_files)
+        self._assembly_pane.filesDropped.connect(
+            self._add_assembly_attachments_from_files
+        )
         self._assembly_pane.refreshRequested.connect(self._refresh_current_assembly)
 
         # File system watcher for live assembly refresh
@@ -97,15 +103,21 @@ class MainWindow(QMainWindow):
     # Layout & wiring
     # ------------------------------------------------------------------
     def _build_layout(self) -> None:
+        from PySide6.QtWidgets import (
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QVBoxLayout,
+        )
+
         central_widget = QWidget(self)
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         # Repository sidebar container (search + list)
-        from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QVBoxLayout as QVBox
         self._repo_container = QWidget(central_widget)
-        repo_layout = QVBox(self._repo_container)
+        repo_layout = QVBoxLayout(self._repo_container)
         repo_layout.setContentsMargins(0, 0, 0, 0)
         repo_layout.setSpacing(0)
         search_row = QHBoxLayout()
@@ -125,8 +137,9 @@ class MainWindow(QMainWindow):
 
         # Stack preview and assembly panes
         from PySide6.QtWidgets import QStackedWidget
+
         self._detail_stack = QStackedWidget(central_widget)
-        self._detail_stack.addWidget(self._preview_pane)   # index 0
+        self._detail_stack.addWidget(self._preview_pane)  # index 0
         self._detail_stack.addWidget(self._assembly_pane)  # index 1
 
         splitter.addWidget(self._detail_stack)
@@ -164,9 +177,7 @@ class MainWindow(QMainWindow):
             self._repository_list.setCurrentRow(0)
         else:
             # Surface the current library root to help users locate files.
-            self.statusBar().showMessage(
-                f"Library: {get_config().library_root}", 5000
-            )
+            self.statusBar().showMessage(f"Library: {get_config().library_root}", 5000)
 
     # ------------------------------------------------------------------
     # Menu & actions
@@ -205,6 +216,7 @@ class MainWindow(QMainWindow):
 
         def _new_empty_assembly() -> None:
             from PySide6.QtWidgets import QInputDialog, QMessageBox
+
             root = get_config().library_root
             name, ok = QInputDialog.getText(
                 self,
@@ -215,7 +227,11 @@ class MainWindow(QMainWindow):
                 return
             name = str(name).strip()
             if not name:
-                QMessageBox.warning(self, "Invalid name", "Assembly name cannot be empty.")
+                QMessageBox.warning(
+                    self,
+                    "Invalid name",
+                    "Assembly name cannot be empty.",
+                )
                 return
 
             # Allocate a unique folder under the library root
@@ -228,24 +244,43 @@ class MainWindow(QMainWindow):
             try:
                 folder.mkdir(parents=True, exist_ok=True)
             except Exception:
-                QMessageBox.critical(self, "Error", f"Unable to create folder: {folder}")
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Unable to create folder: {folder}",
+                )
                 return
 
             # Create assembly asset with empty components
             label = f"Assembly: {folder.name}"
-            metadata = {"kind": "assembly", "components": [], "project": folder.name}
+            metadata = {
+                "kind": "assembly",
+                "components": [],
+                "project": folder.name,
+            }
             existing = self._asset_service.get_asset_by_path(str(folder))
             if existing is None:
-                created = self._asset_service.create_asset(str(folder), label=label, metadata=metadata)
+                created = self._asset_service.create_asset(
+                    str(folder),
+                    label=label,
+                    metadata=metadata,
+                )
             else:
-                created = self._asset_service.update_asset(existing.id, label=label, metadata=metadata)
+                created = self._asset_service.update_asset(
+                    existing.id,
+                    label=label,
+                    metadata=metadata,
+                )
 
             # Refresh and show the new assembly
             self._populate_repository()
             self._show_assembly(created)
             # Optionally select in repository sidebar if visible
             try:
-                if getattr(self, "_repo_container", None) is not None and self._repo_container.isVisible():
+                if (
+                    getattr(self, "_repo_container", None) is not None
+                    and self._repo_container.isVisible()
+                ):
                     for row in range(self._repository_list.count()):
                         it = self._repository_list.item(row)
                         if str(it.data(Qt.UserRole) or it.text()) == str(folder):
@@ -261,7 +296,6 @@ class MainWindow(QMainWindow):
         new_part_action = QAction("New Part in Current Assembly…", self)
         new_part_action.triggered.connect(self._create_new_part)
         assembly_menu.addAction(new_part_action)
-
 
         add_attachment_action = QAction("Add Attachment(s) to Current Assembly…", self)
         add_attachment_action.triggered.connect(self._add_assembly_attachments)
@@ -291,9 +325,7 @@ class MainWindow(QMainWindow):
         self._toggle_repo_action.toggled.connect(self._toggle_repository_sidebar)
         view_menu.addAction(self._toggle_repo_action)
 
-
         # Convenience: open a folder directly as an assembly
-        from PySide6.QtWidgets import QFileDialog
         def _open_as_assembly_from_menu() -> None:
             config = get_config()
             folder = QFileDialog.getExistingDirectory(
@@ -310,6 +342,7 @@ class MainWindow(QMainWindow):
                 if str(item.data(Qt.UserRole) or item.text()) == str(folder):
                     self._repository_list.setCurrentItem(item)
                     break
+
         open_as_assembly_action = QAction("Open Folder as Assembly…", self)
         open_as_assembly_action.triggered.connect(_open_as_assembly_from_menu)
         file_menu.addAction(open_as_assembly_action)
@@ -327,7 +360,9 @@ class MainWindow(QMainWindow):
         removed = 0
 
         # Index existing assets for quick lookup
-        existing_assets = {asset.path: asset for asset in self._asset_service.list_assets()}
+        existing_assets = {
+            asset.path: asset for asset in self._asset_service.list_assets()
+        }
 
         # Discover files in library root with supported 3D extensions
         discovered: set[str] = set()
@@ -398,7 +433,7 @@ class MainWindow(QMainWindow):
                     continue
                 if source.suffix.lower() not in SUPPORTED_EXTENSIONS:
                     continue
-                if relative.parent != Path('.'):
+                if relative.parent != Path("."):
                     continue  # already in a folder
 
                 project_name = derive_project_name(source)
@@ -410,7 +445,8 @@ class MainWindow(QMainWindow):
                     # Allocate a non-colliding destination
                     counter = 1
                     while True:
-                        candidate = project_dir / f"{source.stem}_{counter}{source.suffix}"
+                        candidate_name = f"{source.stem}_{counter}{source.suffix}"
+                        candidate = project_dir / candidate_name
                         if not candidate.exists():
                             destination = candidate
                             break
@@ -426,7 +462,9 @@ class MainWindow(QMainWindow):
                 managed_path = metadata.get("managed_path")
                 if managed_path:
                     try:
-                        managed_resolved = Path(str(managed_path)).expanduser().resolve()
+                        managed_resolved = (
+                            Path(str(managed_path)).expanduser().resolve()
+                        )
                     except Exception:
                         managed_resolved = None
                     if managed_resolved is None or managed_resolved == source:
@@ -468,8 +506,10 @@ class MainWindow(QMainWindow):
         asset = self._asset_service.get_asset_by_path(item_id)
 
         # Assembly detection: assets with kind == 'assembly' in metadata
-        if asset is not None and isinstance(asset.metadata, dict) and (
-            str(asset.metadata.get("kind") or "").lower() == "assembly"
+        if (
+            asset is not None
+            and isinstance(asset.metadata, dict)
+            and (str(asset.metadata.get("kind") or "").lower() == "assembly")
         ):
             self._show_assembly(asset)
             return
@@ -556,10 +596,15 @@ class MainWindow(QMainWindow):
                 kinds.append(kind)
 
         from .ui.assembly_pane import AssemblyArrangement, AssemblyComponent
-        comp_objs = [
-            AssemblyComponent(path=p, label=l, kind=(k if k in ("component", "placeholder") else "component"))
-            for (p, l), k in zip(components, kinds, strict=False)
-        ]
+
+        comp_objs = []
+        for (path, label), kind in zip(components, kinds, strict=False):
+            resolved_kind = (
+                kind if kind in {"component", "placeholder"} else "component"
+            )
+            comp_objs.append(
+                AssemblyComponent(path=path, label=label, kind=resolved_kind)
+            )
         arr_objs = []
         for entry in meta.get("arrangements") or []:
             if not isinstance(entry, dict):
@@ -596,11 +641,13 @@ class MainWindow(QMainWindow):
         for a in atts_raw:
             if not isinstance(a, dict):
                 continue
-            p = str(a.get("path") or "").strip()
-            if not p:
+            path_value = str(a.get("path") or "").strip()
+            if not path_value:
                 continue
-            l = str(a.get("label") or Path(p).name)
-            att_objs.append(AssemblyComponent(path=p, label=l, kind="attachment"))
+            label_text = str(a.get("label") or Path(path_value).name)
+            att_objs.append(
+                AssemblyComponent(path=path_value, label=label_text, kind="attachment")
+            )
 
         self._assembly_pane.set_assembly(
             asset.path,
@@ -621,7 +668,8 @@ class MainWindow(QMainWindow):
     def _handle_search_request(self, query: str) -> None:
         normalized = query.strip()
         if normalized:
-            self._tag_filter_matches = set(self._tag_store.search(normalized).keys())
+            matches = self._tag_store.search(normalized)
+            self._tag_filter_matches = set(matches.keys())
             self.statusBar().showMessage(f"Filtering by tag: {normalized}", 2000)
         else:
             self._tag_filter_matches = None
@@ -631,13 +679,20 @@ class MainWindow(QMainWindow):
     def _handle_tags_changed(self, item_id: str, tags: list[str]) -> None:
         current_tag_query = self._tag_sidebar.search_text()
         if current_tag_query:
-            self._tag_filter_matches = set(self._tag_store.search(current_tag_query).keys())
+            matches = self._tag_store.search(current_tag_query)
+            self._tag_filter_matches = set(matches.keys())
         else:
             self._tag_filter_matches = None
         self._apply_repository_filters()
         self.statusBar().showMessage(f"{len(tags)} tag(s) assigned to {item_id}", 2000)
+
     def _apply_repository_filters(self) -> None:
-        text_needle = (self._repo_search_input.text() if hasattr(self, "_repo_search_input") else "").strip().casefold()
+        raw_text = (
+            self._repo_search_input.text()
+            if hasattr(self, "_repo_search_input")
+            else ""
+        )
+        text_needle = raw_text.strip().casefold()
         tag_matches = getattr(self, "_tag_filter_matches", None)
 
         for row in range(self._repository_list.count()):
@@ -645,7 +700,13 @@ class MainWindow(QMainWindow):
             path = str(item.data(Qt.UserRole) or item.text())
             label = item.text()
             matches_tag = True if tag_matches is None else (path in tag_matches)
-            matches_text = True if not text_needle else (text_needle in (label or "").casefold() or text_needle in path.casefold())
+            if not text_needle:
+                matches_text = True
+            else:
+                label_case = (label or "").casefold()
+                matches_text = (
+                    text_needle in label_case or text_needle in path.casefold()
+                )
             item.setHidden(not (matches_tag and matches_text))
 
     # ------------------------------------------------------------------
@@ -666,6 +727,7 @@ class MainWindow(QMainWindow):
 
         # Discover components within folder
         from .importer import SUPPORTED_EXTENSIONS
+
         components: list[dict] = []
         parts_with_models: set[str] = set()
         for path in folder.rglob("*"):
@@ -685,20 +747,28 @@ class MainWindow(QMainWindow):
                 comp_label = parent.name if parent != folder else Path(record.path).stem
             except Exception:
                 comp_label = record.label
-            components.append({"path": record.path, "label": comp_label, "kind": "component"})
+            components.append(
+                {
+                    "path": record.path,
+                    "label": comp_label,
+                    "kind": "component",
+                }
+            )
 
         # Include placeholder items for immediate subfolders without a model yet
         try:
             for sub in sorted([p for p in folder.iterdir() if p.is_dir()]):
-                if sub.name.startswith('.'):
+                if sub.name.startswith("."):
                     continue
                 if str(sub) in parts_with_models:
                     continue
-                components.append({
-                    "path": str(sub),
-                    "label": sub.name,
-                    "kind": "placeholder",
-                })
+                components.append(
+                    {
+                        "path": str(sub),
+                        "label": sub.name,
+                        "kind": "placeholder",
+                    }
+                )
         except Exception:
             pass
 
@@ -708,11 +778,15 @@ class MainWindow(QMainWindow):
         preserved_arrangements: list[dict] = []
         if existing is not None:
             try:
-                preserved_attachments = list((existing.metadata or {}).get("attachments") or [])
+                preserved_attachments = list(
+                    (existing.metadata or {}).get("attachments") or []
+                )
             except Exception:
                 preserved_attachments = []
             try:
-                preserved_arrangements = list((existing.metadata or {}).get("arrangements") or [])
+                preserved_arrangements = list(
+                    (existing.metadata or {}).get("arrangements") or []
+                )
             except Exception:
                 preserved_arrangements = []
         try:
@@ -736,10 +810,17 @@ class MainWindow(QMainWindow):
             )
         else:
             # Merge components while preserving attachments
-            self._asset_service.update_asset(existing.id, metadata=metadata, label=label)
+            self._asset_service.update_asset(
+                existing.id,
+                metadata=metadata,
+                label=label,
+            )
 
         self._populate_repository()
-        self.statusBar().showMessage(f"Assembly '{name}' updated with {len(components)} component(s)", 4000)
+        self.statusBar().showMessage(
+            f"Assembly '{name}' updated with {len(components)} component(s)",
+            4000,
+        )
         # Update watcher to monitor latest folder
         try:
             self._watch_assembly_folder(folder)
@@ -748,6 +829,7 @@ class MainWindow(QMainWindow):
 
     def _add_assembly_attachments(self) -> None:
         from PySide6.QtWidgets import QFileDialog
+
         files, _ = QFileDialog.getOpenFileNames(self, "Select attachment files")
         if not files:
             return
@@ -755,7 +837,11 @@ class MainWindow(QMainWindow):
 
     def _add_assembly_attachments_from_files(self, files: list[str]) -> None:
         asset = self._current_asset
-        if asset is None or not isinstance(asset.metadata, dict) or str(asset.metadata.get("kind") or "").lower() != "assembly":
+        if asset is None or not isinstance(asset.metadata, dict):
+            self.statusBar().showMessage("Select an assembly to add attachments.", 3000)
+            return
+        kind = str(asset.metadata.get("kind") or "").lower()
+        if kind != "assembly":
             self.statusBar().showMessage("Select an assembly to add attachments.", 3000)
             return
 
@@ -827,10 +913,14 @@ class MainWindow(QMainWindow):
         refreshed = self._asset_service.update_asset(asset.id, metadata=meta)
         self._show_assembly(refreshed)
         self.statusBar().showMessage(f"Added {len(added)} attachment(s)", 4000)
-    
+
     def _organize_parts_into_folders(self) -> None:
         asset = self._current_asset
-        if asset is None or not isinstance(asset.metadata, dict) or str(asset.metadata.get("kind") or "").lower() != "assembly":
+        if asset is None or not isinstance(asset.metadata, dict):
+            self.statusBar().showMessage("Select an assembly to organize parts.", 3000)
+            return
+        kind = str(asset.metadata.get("kind") or "").lower()
+        if kind != "assembly":
             self.statusBar().showMessage("Select an assembly to organize parts.", 3000)
             return
         folder = Path(asset.path).expanduser().resolve()
@@ -838,6 +928,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Assembly path is not a folder on disk.", 3000)
             return
         from .importer import SUPPORTED_EXTENSIONS
+
         moved = 0
         for path in list(folder.glob("*")):
             if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
@@ -862,17 +953,26 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Organized parts: {moved} moved", 4000)
 
     def _open_current_assembly_folder(self) -> None:
-        from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
         asset = self._current_asset
-        if asset is None or not isinstance(asset.metadata, dict) or str(asset.metadata.get("kind") or "").lower() != "assembly":
+        if asset is None or not isinstance(asset.metadata, dict):
+            self.statusBar().showMessage("Select an assembly to open its folder.", 3000)
+            return
+        kind = str(asset.metadata.get("kind") or "").lower()
+        if kind != "assembly":
             self.statusBar().showMessage("Select an assembly to open its folder.", 3000)
             return
         folder = Path(asset.path).expanduser()
         if not folder.exists():
-            self.statusBar().showMessage("Assembly folder does not exist on disk.", 3000)
+            self.statusBar().showMessage(
+                "Assembly folder does not exist on disk.",
+                3000,
+            )
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
     # ------------------------------------------------------------------
     # Assembly refresh helpers
     # ------------------------------------------------------------------
@@ -880,7 +980,10 @@ class MainWindow(QMainWindow):
         asset = self._current_asset
         if asset is None:
             return
-        if not isinstance(asset.metadata, dict) or str(asset.metadata.get("kind") or "").lower() != "assembly":
+        if not isinstance(asset.metadata, dict):
+            return
+        kind = str(asset.metadata.get("kind") or "").lower()
+        if kind != "assembly":
             return
         folder = Path(asset.path)
         self._create_or_update_assembly(folder)
@@ -904,17 +1007,21 @@ class MainWindow(QMainWindow):
         # Debounce refresh bursts
         self._fs_debounce.start()
 
-
     def _open_item_folder(self, item_path: str) -> None:
-        from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
         folder = Path(item_path).expanduser().parent
         if folder.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _navigate_up_assembly(self) -> None:
         asset = self._current_asset
-        if asset is None or not isinstance(asset.metadata, dict) or str(asset.metadata.get("kind") or "").lower() != "assembly":
+        if asset is None or not isinstance(asset.metadata, dict):
+            self.statusBar().showMessage("Select an assembly to navigate.", 3000)
+            return
+        kind = str(asset.metadata.get("kind") or "").lower()
+        if kind != "assembly":
             self.statusBar().showMessage("Select an assembly to navigate.", 3000)
             return
         current = Path(asset.path).expanduser().resolve()
@@ -943,6 +1050,7 @@ class MainWindow(QMainWindow):
         except Exception:
             item = None
         from PySide6.QtWidgets import QMenu
+
         menu = QMenu(self)
         new_assembly_act = menu.addAction("New Empty Assembly…")
         open_assembly_act = menu.addAction("Open as Assembly")
@@ -969,13 +1077,19 @@ class MainWindow(QMainWindow):
                 try:
                     folder.relative_to(get_config().library_root)
                 except Exception:
-                    self.statusBar().showMessage("Folder is outside the library root.", 3000)
+                    self.statusBar().showMessage(
+                        "Folder is outside the library root.",
+                        3000,
+                    )
                     return
                 self._create_or_update_assembly(folder)
                 # Select assembly
                 for row in range(self._repository_list.count()):
                     candidate = self._repository_list.item(row)
-                    if str(candidate.data(Qt.UserRole) or candidate.text()) == str(folder):
+                    candidate_path = str(
+                        candidate.data(Qt.UserRole) or candidate.text()
+                    )
+                    if candidate_path == str(folder):
                         self._repository_list.setCurrentItem(candidate)
                         break
         elif action == open_folder_act:
@@ -997,7 +1111,8 @@ class MainWindow(QMainWindow):
         self._create_or_update_assembly(folder)
         for row in range(self._repository_list.count()):
             item = self._repository_list.item(row)
-            if str(item.data(Qt.UserRole) or item.text()) == str(folder):
+            item_path = str(item.data(Qt.UserRole) or item.text())
+            if item_path == str(folder):
                 self._repository_list.setCurrentItem(item)
                 break
 
@@ -1008,6 +1123,7 @@ class MainWindow(QMainWindow):
 
     def _new_empty_assembly_dialog(self) -> None:
         from PySide6.QtWidgets import QInputDialog, QMessageBox
+
         root = get_config().library_root
         name, ok = QInputDialog.getText(
             self,
@@ -1018,7 +1134,11 @@ class MainWindow(QMainWindow):
             return
         name = str(name).strip()
         if not name:
-            QMessageBox.warning(self, "Invalid name", "Assembly name cannot be empty.")
+            QMessageBox.warning(
+                self,
+                "Invalid name",
+                "Assembly name cannot be empty.",
+            )
             return
         base = root / name
         folder = base
@@ -1029,22 +1149,40 @@ class MainWindow(QMainWindow):
         try:
             folder.mkdir(parents=True, exist_ok=True)
         except Exception:
-            QMessageBox.critical(self, "Error", f"Unable to create folder: {folder}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Unable to create folder: {folder}",
+            )
             return
         label = f"Assembly: {folder.name}"
-        metadata = {"kind": "assembly", "components": [], "project": folder.name}
+        metadata = {
+            "kind": "assembly",
+            "components": [],
+            "project": folder.name,
+        }
         existing = self._asset_service.get_asset_by_path(str(folder))
         if existing is None:
-            created = self._asset_service.create_asset(str(folder), label=label, metadata=metadata)
+            created = self._asset_service.create_asset(
+                str(folder),
+                label=label,
+                metadata=metadata,
+            )
         else:
-            created = self._asset_service.update_asset(existing.id, label=label, metadata=metadata)
+            created = self._asset_service.update_asset(
+                existing.id,
+                label=label,
+                metadata=metadata,
+            )
         self._populate_repository()
         self._show_assembly(created)
         try:
-            if getattr(self, "_repo_container", None) is not None and self._repo_container.isVisible():
+            repo_container = getattr(self, "_repo_container", None)
+            if repo_container is not None and repo_container.isVisible():
                 for row in range(self._repository_list.count()):
                     it = self._repository_list.item(row)
-                    if str(it.data(Qt.UserRole) or it.text()) == str(folder):
+                    item_path = str(it.data(Qt.UserRole) or it.text())
+                    if item_path == str(folder):
                         self._repository_list.setCurrentItem(it)
                         break
         except Exception:
@@ -1052,17 +1190,38 @@ class MainWindow(QMainWindow):
 
     def _create_new_part(self) -> None:
         from PySide6.QtWidgets import QInputDialog, QMessageBox
+
         asset = self._current_asset
-        if asset is None or not isinstance(asset.metadata, dict) or str(asset.metadata.get("kind") or "").lower() != "assembly":
-            QMessageBox.information(self, "No Assembly", "Select or open an assembly first.")
+        if asset is None or not isinstance(asset.metadata, dict):
+            QMessageBox.information(
+                self,
+                "No Assembly",
+                "Select or open an assembly first.",
+            )
+            return
+        kind = str(asset.metadata.get("kind") or "").lower()
+        if kind != "assembly":
+            QMessageBox.information(
+                self,
+                "No Assembly",
+                "Select or open an assembly first.",
+            )
             return
         folder = Path(asset.path).expanduser().resolve()
-        name, ok = QInputDialog.getText(self, "New Part", "Part name (folder under assembly):")
+        name, ok = QInputDialog.getText(
+            self,
+            "New Part",
+            "Part name (folder under assembly):",
+        )
         if not ok:
             return
         name = str(name).strip()
         if not name:
-            QMessageBox.warning(self, "Invalid name", "Part name cannot be empty.")
+            QMessageBox.warning(
+                self,
+                "Invalid name",
+                "Part name cannot be empty.",
+            )
             return
         part_dir = folder / name
         counter = 1
@@ -1072,15 +1231,20 @@ class MainWindow(QMainWindow):
         try:
             part_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
-            QMessageBox.critical(self, "Error", f"Unable to create part folder: {part_dir}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Unable to create part folder: {part_dir}",
+            )
             return
         self._create_or_update_assembly(folder)
         parent_asset = self._asset_service.get_asset_by_path(str(folder))
         if parent_asset is not None:
             self._show_assembly(parent_asset)
         try:
-            from PySide6.QtGui import QDesktopServices
             from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(part_dir)))
         except Exception:
             pass
