@@ -35,7 +35,6 @@ class AssetRecord:
 
 @dataclass(slots=True)
 class CustomizationRecord:
-
     """Represent a customization stored in the database."""
 
     id: int
@@ -386,11 +385,12 @@ class AssetRepository:
         now = datetime.now(UTC)
 
         with self._storage.connect() as connection:
-            customization_row = self._fetch_customization_row(connection, customization_id)
+            customization_row = self._fetch_customization_row(
+                connection,
+                customization_id,
+            )
             if customization_row is None:
-                raise KeyError(
-                    f"Customization {customization_id} does not exist"
-                )
+                raise KeyError(f"Customization {customization_id} does not exist")
             base_asset_id = int(customization_row["base_asset_id"])
 
             connection.execute(
@@ -760,9 +760,7 @@ class AssetRepository:
             (asset_id,),
         ).fetchone()
 
-    def _fetch_customization_row(
-        self, connection: Connection, customization_id: int
-    ):
+    def _fetch_customization_row(self, connection: Connection, customization_id: int):
         return connection.execute(
             "SELECT * FROM customizations WHERE id = ?",
             (customization_id,),
@@ -845,8 +843,6 @@ class AssetRepository:
             created_at=created_at,
             updated_at=updated_at,
         )
-
-
 
     def _row_to_relationship_record(self, row) -> AssetRelationshipRecord:
         created_at = datetime.fromisoformat(row["created_at"])

@@ -165,8 +165,7 @@ def test_execute_customization_registers_artifacts(
     assert customization_meta["relationship"] == "output"
     assert customization_meta["base_asset_label"] == base_asset.label
     assert (
-        customization_meta["base_asset_updated_at"]
-        == base_asset.updated_at.isoformat()
+        customization_meta["base_asset_updated_at"] == base_asset.updated_at.isoformat()
     )
 
     recorded_source = customization_meta.get("source_modified_at")
@@ -195,4 +194,3 @@ def test_execute_customization_registers_artifacts(
         (output_result.asset.id, "output"),
         (preview_result.asset.id, "preview"),
     }
-

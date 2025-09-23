@@ -6,29 +6,27 @@ Relies on trimesh for mesh loading and PySide6 OpenGL wrappers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
-from pathlib import Path
 import math
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
-
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QMatrix4x4, QVector3D
 from PySide6.QtOpenGL import (
+    QOpenGLBuffer,
     QOpenGLShader,
     QOpenGLShaderProgram,
-    QOpenGLBuffer,
     QOpenGLVertexArrayObject,
 )
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+
+from ..importer import extract_step_metadata
 
 try:  # pragma: no cover - exercised at runtime
     import trimesh  # type: ignore
 except Exception:  # pragma: no cover - fallback if unavailable
     trimesh = None  # type: ignore
-
-from ..importer import extract_step_metadata
 
 
 VERT_SHADER = """
@@ -69,10 +67,10 @@ void main() {
 @dataclass
 class _MeshData:
     vertices: np.ndarray  # (N, 3) float32
-    normals: np.ndarray   # (N, 3) float32
-    indices: np.ndarray   # (M,) uint32
-    center: np.ndarray    # (3,) float32
-    radius: float         # scalar
+    normals: np.ndarray  # (N, 3) float32
+    indices: np.ndarray  # (M,) uint32
+    center: np.ndarray  # (3,) float32
+    radius: float  # scalar
 
 
 class ModelViewer(QOpenGLWidget):
@@ -80,9 +78,9 @@ class ModelViewer(QOpenGLWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._path: Optional[Path] = None
-        self._mesh: Optional[_MeshData] = None
-        self._program: Optional[QOpenGLShaderProgram] = None
+        self._path: Path | None = None
+        self._mesh: _MeshData | None = None
+        self._program: QOpenGLShaderProgram | None = None
         self._last_pos = QPoint()
         self._yaw = 0.0
         self._pitch = 0.0
@@ -145,7 +143,7 @@ class ModelViewer(QOpenGLWidget):
     def paintGL(self) -> None:  # pragma: no cover - visual
         gl = self.funcs
         gl.glViewport(0, 0, self.width(), self.height())
-        gl.glClearColor(18/255, 22/255, 28/255, 1.0)
+        gl.glClearColor(18 / 255, 22 / 255, 28 / 255, 1.0)
         gl.glClear(self._GL_COLOR_BUFFER_BIT | self._GL_DEPTH_BUFFER_BIT)
 
         if self._program is None or self._mesh is None:
@@ -168,32 +166,52 @@ class ModelViewer(QOpenGLWidget):
         stride = interleaved.shape[1] * 4
 
         vao = QOpenGLVertexArrayObject(self)
-        vao.create(); vao.bind()
+        vao.create()
+        vao.bind()
 
         # VBO with interleaved positions and normals
         vbo = QOpenGLBuffer(QOpenGLBuffer.VertexBuffer)
-        vbo.create(); vbo.bind()
+        vbo.create()
+        vbo.bind()
         vbo.allocate(interleaved.tobytes(), interleaved.nbytes)
 
         # EBO for indices
         ebo = QOpenGLBuffer(QOpenGLBuffer.IndexBuffer)
-        ebo.create(); ebo.bind()
+        ebo.create()
+        ebo.bind()
         ebo.allocate(indices.tobytes(), indices.nbytes)
 
         # Attributes
         pos_loc = 0
         nrm_loc = 1
         self._program.enableAttributeArray(pos_loc)
-        self._program.setAttributeBuffer(pos_loc, self._GL_FLOAT, 0, 3, stride)
+        self._program.setAttributeBuffer(
+            pos_loc,
+            self._GL_FLOAT,
+            0,
+            3,
+            stride,
+        )
         self._program.enableAttributeArray(nrm_loc)
-        self._program.setAttributeBuffer(nrm_loc, self._GL_FLOAT, 12, 3, stride)
+        self._program.setAttributeBuffer(
+            nrm_loc,
+            self._GL_FLOAT,
+            12,
+            3,
+            stride,
+        )
 
         # Draw indexed geometry via extra functions when available
         count = int(indices.size)
         drew = False
         if self.extra is not None:
             try:
-                self.extra.glDrawElements(self._GL_TRIANGLES, count, self._GL_UNSIGNED_INT, 0)
+                self.extra.glDrawElements(
+                    self._GL_TRIANGLES,
+                    count,
+                    self._GL_UNSIGNED_INT,
+                    0,
+                )
                 drew = True
             except Exception:
                 drew = False
@@ -202,18 +220,37 @@ class ModelViewer(QOpenGLWidget):
             tri_indices = indices.reshape(-1)
             flat_count = int(tri_indices.shape[0])
             # Reuse the same VBO by reallocating flat data
-            flat_interleaved = np.hstack([vertices[tri_indices], normals[tri_indices]]).astype(np.float32)
-            vbo.bind(); vbo.allocate(flat_interleaved.tobytes(), flat_interleaved.nbytes)
-            self._program.setAttributeBuffer(pos_loc, self._GL_FLOAT, 0, 3, flat_interleaved.shape[1]*4)
-            self._program.setAttributeBuffer(nrm_loc, self._GL_FLOAT, 12, 3, flat_interleaved.shape[1]*4)
+            flat_interleaved = np.hstack(
+                [vertices[tri_indices], normals[tri_indices]]
+            ).astype(np.float32)
+            vbo.bind()
+            vbo.allocate(flat_interleaved.tobytes(), flat_interleaved.nbytes)
+            flat_stride = flat_interleaved.shape[1] * 4
+            self._program.setAttributeBuffer(
+                pos_loc,
+                self._GL_FLOAT,
+                0,
+                3,
+                flat_stride,
+            )
+            self._program.setAttributeBuffer(
+                nrm_loc,
+                self._GL_FLOAT,
+                12,
+                3,
+                flat_stride,
+            )
             self.funcs.glDrawArrays(self._GL_TRIANGLES, 0, flat_count)
 
         # Cleanup
         self._program.disableAttributeArray(pos_loc)
         self._program.disableAttributeArray(nrm_loc)
-        ebo.release(); ebo.destroy()
-        vbo.release(); vbo.destroy()
-        vao.release(); vao.destroy()
+        ebo.release()
+        ebo.destroy()
+        vbo.release()
+        vbo.destroy()
+        vao.release()
+        vao.destroy()
 
         self._program.release()
 
@@ -228,7 +265,10 @@ class ModelViewer(QOpenGLWidget):
         self._last_pos = event.position().toPoint()
         if event.buttons() & Qt.LeftButton:
             self._yaw += delta.x() * 0.5
-            self._pitch = max(-89.0, min(89.0, self._pitch + delta.y() * 0.5))
+            self._pitch = max(
+                -89.0,
+                min(89.0, self._pitch + delta.y() * 0.5),
+            )
             self._user_modified = True
             self.update()
         elif event.buttons() & Qt.RightButton:
@@ -239,7 +279,7 @@ class ModelViewer(QOpenGLWidget):
 
     def wheelEvent(self, event):  # type: ignore[override]
         delta = event.angleDelta().y() / 120.0
-        self._distance = float(max(0.2, min(100.0, self._distance * (0.9 ** delta))))
+        self._distance = float(max(0.2, min(100.0, self._distance * (0.9**delta))))
         self._user_modified = True
         self.update()
 
@@ -278,7 +318,11 @@ class ModelViewer(QOpenGLWidget):
         if self._mesh is not None:
             s = 1.0 / max(self._mesh.radius, 1e-6)
             model.scale(s)
-            model.translate(-float(self._mesh.center[0]), -float(self._mesh.center[1]), -float(self._mesh.center[2]))
+            model.translate(
+                -float(self._mesh.center[0]),
+                -float(self._mesh.center[1]),
+                -float(self._mesh.center[2]),
+            )
 
         mvp = proj * view * model
         return mvp, model
@@ -292,17 +336,19 @@ class ModelViewer(QOpenGLWidget):
             return
 
         suffix = self._path.suffix.lower()
-        vertices: Optional[np.ndarray] = None
-        faces: Optional[np.ndarray] = None
+        vertices: np.ndarray | None = None
+        faces: np.ndarray | None = None
 
         if suffix in {".stl", ".obj"} and trimesh is not None:
             try:
                 mesh = trimesh.load(self._path, force="mesh")  # type: ignore[call-arg]
                 if hasattr(mesh, "geometry") and mesh.geometry:
                     mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))  # type: ignore[assignment]
-                if hasattr(mesh, "vertices") and hasattr(mesh, "faces") and len(mesh.vertices) and len(mesh.faces):
-                    vertices = np.asarray(mesh.vertices, dtype=np.float32)
-                    faces = np.asarray(mesh.faces, dtype=np.int32)
+                if hasattr(mesh, "vertices") and hasattr(mesh, "faces"):
+                    has_data = len(mesh.vertices) and len(mesh.faces)
+                    if has_data:
+                        vertices = np.asarray(mesh.vertices, dtype=np.float32)
+                        faces = np.asarray(mesh.faces, dtype=np.int32)
             except Exception:
                 vertices = None
                 faces = None
@@ -312,7 +358,10 @@ class ModelViewer(QOpenGLWidget):
                 meta = extract_step_metadata(self._path)
                 mins = meta.get("bounding_box_min") or [0, 0, 0]
                 maxs = meta.get("bounding_box_max") or [1, 1, 1]
-                v, f = self._build_box(np.array(mins, dtype=float), np.array(maxs, dtype=float))
+                v, f = self._build_box(
+                    np.array(mins, dtype=float),
+                    np.array(maxs, dtype=float),
+                )
                 vertices, faces = v, f
 
         if vertices is None or faces is None:
@@ -350,20 +399,42 @@ class ModelViewer(QOpenGLWidget):
         self._auto_fit_applied = False
         self._fit_to_view()
 
-    def _build_box(self, mins: np.ndarray, maxs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _build_box(
+        self,
+        mins: np.ndarray,
+        maxs: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
         x0, y0, z0 = mins
         x1, y1, z1 = maxs
         verts = np.array(
             [
-                (x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
-                (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1),
-            ], dtype=np.float32
+                (x0, y0, z0),
+                (x1, y0, z0),
+                (x1, y1, z0),
+                (x0, y1, z0),
+                (x0, y0, z1),
+                (x1, y0, z1),
+                (x1, y1, z1),
+                (x0, y1, z1),
+            ],
+            dtype=np.float32,
         )
         faces = np.array(
             [
-                (0,1,2),(0,2,3), (4,5,6),(4,6,7), (0,1,5),(0,5,4),
-                (2,3,7),(2,7,6), (1,2,6),(1,6,5), (3,0,4),(3,4,7),
-            ], dtype=np.int32
+                (0, 1, 2),
+                (0, 2, 3),
+                (4, 5, 6),
+                (4, 6, 7),
+                (0, 1, 5),
+                (0, 5, 4),
+                (2, 3, 7),
+                (2, 7, 6),
+                (1, 2, 6),
+                (1, 6, 5),
+                (3, 0, 4),
+                (3, 4, 7),
+            ],
+            dtype=np.int32,
         )
         return verts, faces
 

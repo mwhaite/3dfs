@@ -2,40 +2,48 @@
 
 from __future__ import annotations
 
+import mimetypes
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from PySide6.QtCore import Qt, Slot, Signal, QSize
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    QSize,
+    Qt,
+    QThreadPool,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import (
-    QIcon,
-    QPixmap,
-    QImage,
-    QPainter,
     QColor,
     QFont,
+    QIcon,
+    QImage,
     QKeySequence,
+    QPainter,
+    QPixmap,
     QShortcut,
 )
-from PySide6.QtCore import QObject, QRunnable, QThreadPool
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHBoxLayout,
     QLabel,
-    QFrame,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
-    QHBoxLayout,
-    QLineEdit,
-    QTextEdit,
-    QSplitter,
-    QVBoxLayout,
     QMenu,
+    QPushButton,
+    QSplitter,
+    QTextEdit,
+    QVBoxLayout,
     QWidget,
 )
 
-from .preview_pane import PreviewPane
 from ..thumbnails import ThumbnailCache, ThumbnailGenerationError
+from .preview_pane import PreviewPane
 
 
 @dataclass(slots=True)
@@ -94,7 +102,9 @@ class AssemblyPane(QWidget):
         self._icon_size = QSize(48, 48)
         self._components.setIconSize(self._icon_size)
         self._components.setContextMenuPolicy(Qt.CustomContextMenu)
-        self._components.customContextMenuRequested.connect(self._show_components_context_menu)
+        self._components.customContextMenuRequested.connect(
+            self._show_components_context_menu
+        )
 
         self._preview = PreviewPane(parent=self)
 
@@ -201,7 +211,8 @@ class AssemblyPane(QWidget):
         attachments = list(attachments)
         if attachments:
             header = QListWidgetItem("Attachments")
-            font = header.font(); font.setBold(True)
+            font = header.font()
+            font.setBold(True)
             header.setFont(font)
             header.setFlags(Qt.ItemIsEnabled)
             self._components.addItem(header)
@@ -226,13 +237,22 @@ class AssemblyPane(QWidget):
             self._preview.clear()
 
     @Slot()
-    def _handle_component_selected(self, current: QListWidgetItem | None, previous: QListWidgetItem | None) -> None:
+    def _handle_component_selected(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None,
+    ) -> None:
         del previous
         if current is None:
             self._preview.clear()
             return
         comp_path = str(current.data(Qt.UserRole) or current.text())
-        self._preview.set_item(comp_path, label=current.text(), metadata=None, asset_record=None)
+        self._preview.set_item(
+            comp_path,
+            label=current.text(),
+            metadata=None,
+            asset_record=None,
+        )
         # Keep selection visible if filtered
         self._ensure_visible(current)
 
@@ -259,7 +279,11 @@ class AssemblyPane(QWidget):
             item = self._components.item(row)
             if str(item.data(Qt.UserRole) or "") == path:
                 # Scale to icon size for crisp display
-                icon_pm = pixmap.scaled(self._icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                icon_pm = pixmap.scaled(
+                    self._icon_size,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
                 item.setIcon(QIcon(icon_pm))
                 break
 
@@ -281,10 +305,10 @@ class AssemblyPane(QWidget):
                 continue
             label = (item.text() or "").casefold()
             path = str(item.data(Qt.UserRole) or "").casefold()
-            item.setHidden(bool(needle) and (needle not in label and needle not in path))
+            hide = bool(needle) and (needle not in label and needle not in path)
+            item.setHidden(hide)
 
     def _ensure_visible(self, item: QListWidgetItem) -> None:
-        row = self._components.row(item)
         self._components.scrollToItem(item)
 
     # ------------------------------------------------------------------
@@ -293,7 +317,7 @@ class AssemblyPane(QWidget):
     def _update_breadcrumb(self, folder: Path) -> None:
         parts = []
         # Build clickable breadcrumb from root to leaf
-        acc = Path(folder.anchor) if folder.anchor else Path('/')
+        acc = Path(folder.anchor) if folder.anchor else Path("/")
         for comp in folder.parts:
             # Skip empty or root duplicate
             if comp in ("/", folder.anchor):
@@ -437,9 +461,18 @@ class _IconWorkerSignals(QObject):
 
 
 class _IconWorker(QRunnable):
-    _IMAGE_EXTENSIONS = frozenset({
-        ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tga", ".tiff", ".webp",
-    })
+    _IMAGE_EXTENSIONS = frozenset(
+        {
+            ".bmp",
+            ".gif",
+            ".jpeg",
+            ".jpg",
+            ".png",
+            ".tga",
+            ".tiff",
+            ".webp",
+        }
+    )
 
     def __init__(self, path: str, size: QSize) -> None:
         super().__init__()
@@ -449,9 +482,7 @@ class _IconWorker(QRunnable):
 
     def run(self) -> None:  # pragma: no cover - async
         try:
-            from pathlib import Path as _P
-            import mimetypes as _mt
-            p = _P(self._path)
+            p = Path(self._path)
             suffix = p.suffix.lower()
             if suffix in self._IMAGE_EXTENSIONS:
                 img = QImage(str(p))
@@ -462,7 +493,7 @@ class _IconWorker(QRunnable):
                 return
 
             # Non-image: handle known attachment types with generated icons
-            ctype, _ = _mt.guess_type(str(p))
+            ctype, _ = mimetypes.guess_type(str(p))
             label, color = self._label_color_for(suffix, ctype or "")
             if label:
                 img = self._render_label_icon(label, color, self._size)
@@ -470,7 +501,13 @@ class _IconWorker(QRunnable):
                 return
 
             cache = ThumbnailCache()
-            result = cache.get_or_render(p, size=(max(64, self._size.width()), max(64, self._size.height())))
+            result = cache.get_or_render(
+                p,
+                size=(
+                    max(64, self._size.width()),
+                    max(64, self._size.height()),
+                ),
+            )
             data = result.image_bytes
             img = QImage()
             if not data or not img.loadFromData(data):
@@ -482,7 +519,12 @@ class _IconWorker(QRunnable):
         except Exception as exc:  # noqa: BLE001
             self.signals.error.emit(self._path, exc.__class__.__name__)
 
-    def _render_label_icon(self, text: str, color: tuple[int, int, int], size: QSize) -> QImage:
+    def _render_label_icon(
+        self,
+        text: str,
+        color: tuple[int, int, int],
+        size: QSize,
+    ) -> QImage:
         w, h = max(16, size.width()), max(16, size.height())
         img = QImage(w, h, QImage.Format_ARGB32)
         img.fill(QColor(32, 38, 46, 255))
@@ -494,7 +536,14 @@ class _IconWorker(QRunnable):
             painter.setBrush(bg)
             painter.setPen(QColor(0, 0, 0, 0))
             margin = int(min(w, h) * 0.08)
-            painter.drawRoundedRect(margin, margin, w - 2 * margin, h - 2 * margin, 10, 10)
+            painter.drawRoundedRect(
+                margin,
+                margin,
+                w - 2 * margin,
+                h - 2 * margin,
+                10,
+                10,
+            )
             # Text
             painter.setPen(QColor(255, 255, 255))
             font = QFont()
@@ -506,7 +555,11 @@ class _IconWorker(QRunnable):
             painter.end()
         return img
 
-    def _label_color_for(self, suffix: str, ctype: str) -> tuple[str, tuple[int, int, int]]:
+    def _label_color_for(
+        self,
+        suffix: str,
+        ctype: str,
+    ) -> tuple[str, tuple[int, int, int]]:
         s = suffix.lower()
         c = ctype.lower()
         # Map by extension first for specificity
@@ -520,7 +573,11 @@ class _IconWorker(QRunnable):
             return ("JSON", (0, 140, 140))
         if s in {".csv"} or c.endswith("csv"):
             return ("CSV", (0, 140, 140))
-        if s in {".zip", ".7z", ".tar", ".gz", ".bz2", ".xz"} or "zip" in c or "compressed" in c:
+        if (
+            s in {".zip", ".7z", ".tar", ".gz", ".bz2", ".xz"}
+            or "zip" in c
+            or "compressed" in c
+        ):
             return ("ZIP", (215, 140, 0))
         if s in {".ppt", ".pptx"}:
             return ("PPT", (209, 72, 54))
