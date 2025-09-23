@@ -301,14 +301,6 @@ class MainWindow(QMainWindow):
         add_attachment_action.triggered.connect(self._add_assembly_attachments)
         assembly_menu.addAction(add_attachment_action)
 
-        new_empty_assembly_action = QAction("New Empty Assembly…", self)
-        new_empty_assembly_action.triggered.connect(self._new_empty_assembly_dialog)
-        assembly_menu.addAction(new_empty_assembly_action)
-
-        new_part_action = QAction("New Part in Current Assembly…", self)
-        new_part_action.triggered.connect(self._create_new_part)
-        assembly_menu.addAction(new_part_action)
-
         organize_parts_action = QAction("Organize Parts Into Folders", self)
         organize_parts_action.triggered.connect(self._organize_parts_into_folders)
         assembly_menu.addAction(organize_parts_action)
