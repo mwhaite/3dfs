@@ -122,7 +122,8 @@ class ScriptReferenceBackend(StubBackend):
         execute: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> CustomizerSession:
-        session = super().plan_build(
+        session = StubBackend.plan_build(
+            self,
             source,
             schema,
             values,

@@ -4,9 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
+import pytest
 
-from three_dfs.ui.assembly_pane import AssemblyComponent, AssemblyPane
+pytest.importorskip("PySide6")
+
+try:  # pragma: no cover - import guarded for CI environments lacking Qt runtime
+    from PySide6.QtCore import Qt
+
+    from three_dfs.ui.assembly_pane import AssemblyComponent, AssemblyPane
+except ImportError as exc:  # pragma: no cover - skip when Qt system libs are missing
+    message = str(exc)
+    if "PySide6" in message or "libGL" in message or "libEGL" in message:
+        pytest.skip(
+            f"PySide6 runtime dependencies unavailable: {message}",
+            allow_module_level=True,
+        )
+    raise
 
 
 def _capture_navigation(pane: AssemblyPane) -> list[str]:

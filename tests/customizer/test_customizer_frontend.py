@@ -3,21 +3,33 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtTest import QSignalSpy
 
-from three_dfs.customizer.openscad import OpenSCADBackend
-from three_dfs.data import TagStore
-from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
-from three_dfs.ui.customizer_dialog import CustomizerDialog, CustomizerSessionConfig
-from three_dfs.ui.customizer_panel import (
-    BooleanParameterWidget,
-    ChoiceParameterWidget,
-    CustomizerPanel,
-    NumberParameterWidget,
-    RangeParameterWidget,
-)
-from three_dfs.ui.preview_pane import PreviewPane
-from three_dfs.ui.tag_sidebar import TagSidebar
+pytest.importorskip("PySide6")
+
+try:  # pragma: no cover - guarded to skip gracefully on headless CI
+    from PySide6.QtTest import QSignalSpy
+
+    from three_dfs.customizer.openscad import OpenSCADBackend
+    from three_dfs.data import TagStore
+    from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
+    from three_dfs.ui.customizer_dialog import CustomizerDialog, CustomizerSessionConfig
+    from three_dfs.ui.customizer_panel import (
+        BooleanParameterWidget,
+        ChoiceParameterWidget,
+        CustomizerPanel,
+        NumberParameterWidget,
+        RangeParameterWidget,
+    )
+    from three_dfs.ui.preview_pane import PreviewPane
+    from three_dfs.ui.tag_sidebar import TagSidebar
+except ImportError as exc:  # pragma: no cover - skip when Qt libs missing
+    message = str(exc)
+    if "PySide6" in message or "libGL" in message or "libEGL" in message:
+        pytest.skip(
+            f"PySide6 runtime dependencies unavailable: {message}",
+            allow_module_level=True,
+        )
+    raise
 
 
 def _fixture_path(name: str) -> Path:
