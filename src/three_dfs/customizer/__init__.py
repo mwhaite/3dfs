@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 __all__ = [
     "ParameterDescriptor",
@@ -173,33 +174,69 @@ class CustomizerSession:
         )
 
 
-class CustomizerBackend(Protocol):
-    """Common interface implemented by customization backends."""
+if TYPE_CHECKING:
+    from typing import Protocol as _CustomizerBackendProtocol
 
-    name: str
+    class CustomizerBackend(_CustomizerBackendProtocol):
+        """Common interface implemented by customization backends."""
 
-    def load_schema(self, source: Path) -> ParameterSchema:
-        """Inspect *source* and return a :class:`ParameterSchema`."""
+        name: str
 
-    def validate(
-        self,
-        schema: ParameterSchema,
-        values: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        """Validate *values* against *schema* returning normalized data."""
+        def load_schema(self, source: Path) -> ParameterSchema:
+            """Inspect *source* and return a :class:`ParameterSchema`."""
 
-    def plan_build(
-        self,
-        source: Path,
-        schema: ParameterSchema,
-        values: Mapping[str, Any],
-        *,
-        output_dir: Path,
-        asset_service: AssetService | None = None,
-        execute: bool = False,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> CustomizerSession:
-        """Return a :class:`CustomizerSession` describing the build plan."""
+        def validate(
+            self,
+            schema: ParameterSchema,
+            values: Mapping[str, Any],
+        ) -> dict[str, Any]:
+            """Validate *values* against *schema* returning normalized data."""
+
+        def plan_build(
+            self,
+            source: Path,
+            schema: ParameterSchema,
+            values: Mapping[str, Any],
+            *,
+            output_dir: Path,
+            asset_service: AssetService | None = None,
+            execute: bool = False,
+            metadata: Mapping[str, Any] | None = None,
+        ) -> CustomizerSession:
+            """Return a :class:`CustomizerSession` describing the build plan."""
+
+else:
+
+    class CustomizerBackend(ABC):
+        """Common interface implemented by customization backends."""
+
+        name: str
+
+        @abstractmethod
+        def load_schema(self, source: Path) -> ParameterSchema:
+            """Inspect *source* and return a :class:`ParameterSchema`."""
+
+        @abstractmethod
+        def validate(
+            self,
+            schema: ParameterSchema,
+            values: Mapping[str, Any],
+        ) -> dict[str, Any]:
+            """Validate *values* against *schema* returning normalized data."""
+
+        @abstractmethod
+        def plan_build(
+            self,
+            source: Path,
+            schema: ParameterSchema,
+            values: Mapping[str, Any],
+            *,
+            output_dir: Path,
+            asset_service: AssetService | None = None,
+            execute: bool = False,
+            metadata: Mapping[str, Any] | None = None,
+        ) -> CustomizerSession:
+            """Return a :class:`CustomizerSession` describing the build plan."""
 
 
 from .pipeline import (  # noqa: E402,I001
