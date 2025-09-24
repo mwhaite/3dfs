@@ -114,6 +114,29 @@ def execute_customization(
 
         artifact_results: list[ArtifactResult] = []
         for index, artifact in enumerate(session.artifacts, start=1):
+            if artifact.asset_id is not None:
+                existing_asset = asset_service.repository.get_asset(artifact.asset_id)
+                if existing_asset is None:
+                    raise LookupError(
+                        "Generated artifact references unknown asset "
+                        f"{artifact.asset_id}"
+                    )
+
+                relationship = asset_service.repository.create_asset_relationship(
+                    customization_record.id,
+                    existing_asset.id,
+                    artifact.relationship,
+                )
+
+                artifact_results.append(
+                    ArtifactResult(
+                        artifact=artifact,
+                        asset=existing_asset,
+                        relationship=relationship,
+                    )
+                )
+                continue
+
             source_path = Path(artifact.path)
             if not source_path.exists():
                 raise FileNotFoundError(
@@ -170,10 +193,14 @@ def execute_customization(
             for result in artifact_results:
                 metadata = dict(result.asset.metadata)
                 customization_meta = metadata.get("customization")
-                if isinstance(customization_meta, Mapping):
-                    customization_meta = dict(customization_meta)
-                else:
-                    customization_meta = {}
+                if not isinstance(customization_meta, Mapping):
+                    refreshed.append(result)
+                    continue
+                if customization_meta.get("id") != customization_record.id:
+                    refreshed.append(result)
+                    continue
+
+                customization_meta = dict(customization_meta)
                 customization_meta["previews"] = preview_entries
                 metadata["customization"] = customization_meta
                 updated_asset = asset_service.update_asset(
