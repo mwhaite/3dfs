@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from .utils.paths import coerce_required_path
+
 __all__ = [
     "AppConfig",
     "DEFAULT_LIBRARY_ROOT",
@@ -20,24 +22,6 @@ LIBRARY_ROOT_ENV_VAR: Final[str] = "THREE_DFS_LIBRARY_PATH"
 
 DEFAULT_LIBRARY_ROOT: Final[Path] = Path.home() / "Models"
 """Default filesystem path where the asset library is stored."""
-
-
-def _coerce_path(value: str | Path) -> Path:
-    """Return *value* coerced into an absolute :class:`~pathlib.Path`."""
-
-    if isinstance(value, Path):
-        candidate = value
-    else:
-        text = str(value).strip()
-        if not text:
-            msg = "Library path overrides cannot be empty"
-            raise ValueError(msg)
-        candidate = Path(text)
-
-    expanded = candidate.expanduser()
-    return expanded.resolve()
-
-
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     """Runtime configuration for the 3dfs application."""
@@ -45,7 +29,7 @@ class AppConfig:
     library_root: Path
 
     def __post_init__(self) -> None:
-        normalized = _coerce_path(self.library_root)
+        normalized = coerce_required_path(self.library_root)
         object.__setattr__(self, "library_root", normalized)
 
 
@@ -71,10 +55,18 @@ def configure(*, library_root: str | Path | None = None) -> AppConfig:
 
 def _build_config(*, library_root: str | Path | None = None) -> AppConfig:
     if library_root is not None:
-        return AppConfig(library_root=_coerce_path(library_root))
+        normalized = coerce_required_path(
+            library_root,
+            empty_error="Library path overrides cannot be empty",
+        )
+        return AppConfig(library_root=normalized)
 
     env_value = os.environ.get(LIBRARY_ROOT_ENV_VAR)
     if env_value:
-        return AppConfig(library_root=_coerce_path(env_value))
+        normalized = coerce_required_path(
+            env_value,
+            empty_error="Library path overrides cannot be empty",
+        )
+        return AppConfig(library_root=normalized)
 
     return AppConfig(library_root=DEFAULT_LIBRARY_ROOT)
