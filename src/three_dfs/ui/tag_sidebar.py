@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..customizer.status import evaluate_customization_status
 from ..data import TagStore
-from ..customizer.status import CustomizationStatus, evaluate_customization_status
 from ..storage import AssetService
 
 __all__ = ["TagSidebar"]

@@ -35,4 +35,3 @@ def resolve_storage_root(
     if not candidate.is_absolute():
         candidate = candidate.resolve()
     return candidate
-

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
-from three_dfs.assembly import discover_arrangement_scripts
+from three_dfs.assembly import (
+    build_attachment_metadata,
+    build_component_metadata,
+    discover_arrangement_scripts,
+)
+from three_dfs.storage.repository import AssetRecord
 
 
 def _resolve(path: Path) -> str:
@@ -36,6 +42,12 @@ def test_discover_arrangement_scripts_detects_layouts(tmp_path):
     rel_paths = {entry.get("rel_path") for entry in arrangements}
     assert f"arrangements/{exploded.name}" in rel_paths
     assert f"arrangements/{packed.name}" in rel_paths
+
+    for entry in arrangements:
+        metadata = entry.get("metadata")
+        assert isinstance(metadata, dict)
+        assert metadata.get("handler") == "openscad"
+        assert metadata.get("assembly_path") == str(assembly_dir.resolve())
 
 
 def test_discover_arrangement_scripts_preserves_existing_metadata(tmp_path):
@@ -75,8 +87,87 @@ def test_discover_arrangement_scripts_preserves_existing_metadata(tmp_path):
     custom_key = _resolve(custom)
     assert custom_key in by_path
     assert by_path[custom_key]["label"] == "Custom Layout"
-    assert by_path[custom_key]["metadata"] == {"variant": "A"}
+    custom_meta = by_path[custom_key]["metadata"]
+    assert isinstance(custom_meta, dict)
+    assert custom_meta.get("variant") == "A"
 
     for path in by_path:
         assert "missing.scad" not in path
         assert "legacy.scad" not in path
+
+
+def _make_asset_record(base_path: Path) -> AssetRecord:
+    now = datetime.now(UTC)
+    part = base_path / "component.stl"
+    record = AssetRecord(
+        id=42,
+        path=str(part),
+        label="component.stl",
+        metadata={"source": "https://example.com/component.stl", "creator": "Ada"},
+        tags=[],
+        created_at=now,
+        updated_at=now,
+    )
+    return record
+
+
+def test_build_component_metadata_includes_author_and_links(tmp_path):
+    assembly_root = tmp_path / "assembly"
+    assembly_root.mkdir()
+    record = _make_asset_record(tmp_path)
+    metadata = build_component_metadata(record, assembly_root=assembly_root)
+    assert metadata["asset_id"] == record.id
+    assert metadata["assembly_path"] == str(assembly_root)
+    assert metadata["author"] == "Ada"
+    links = metadata.get("upstream_links")
+    assert isinstance(links, list)
+    assert any(
+        entry.get("url") == "https://example.com/component.stl" for entry in links
+    )
+    assert metadata.get("handler")
+
+
+def test_build_attachment_metadata_sets_relationships(tmp_path):
+    assembly_root = tmp_path / "assembly"
+    assembly_root.mkdir()
+    attachment = assembly_root / "notes.txt"
+    attachment.write_text("hello")
+
+    metadata = build_attachment_metadata(
+        attachment,
+        assembly_root=assembly_root,
+        source_path=attachment,
+    )
+
+    assert metadata["assembly_path"] == str(assembly_root)
+    assert metadata["asset_path"] == str(attachment)
+    assert metadata.get("handler") == "system"
+    related = metadata.get("related_items")
+    assert isinstance(related, list) and related
+    assert related[0].get("path") == str(assembly_root)
+
+
+def test_build_attachment_metadata_merges_links_and_author(tmp_path):
+    assembly_root = tmp_path / "assembly"
+    assembly_root.mkdir()
+    attachment = assembly_root / "notes.txt"
+    attachment.write_text("hello")
+
+    metadata = build_attachment_metadata(
+        attachment,
+        assembly_root=assembly_root,
+        existing_metadata={
+            "creator": "Grace Hopper",
+            "source_url": "https://example.com/notes.txt",
+            "upstream_links": [
+                {"url": "https://existing.example", "label": "Existing"}
+            ],
+        },
+    )
+
+    assert metadata["author"] == "Grace Hopper"
+    links = metadata.get("upstream_links")
+    assert isinstance(links, list)
+    urls = {entry.get("url") for entry in links if isinstance(entry, dict)}
+    assert "https://example.com/notes.txt" in urls
+    assert "https://existing.example" in urls

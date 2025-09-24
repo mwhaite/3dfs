@@ -7,7 +7,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer
 from PySide6.QtGui import QAction
@@ -22,11 +22,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .assembly import discover_arrangement_scripts
+from .assembly import (
+    build_attachment_metadata,
+    build_component_metadata,
+    build_placeholder_metadata,
+    discover_arrangement_scripts,
+)
 from .config import get_config
+from .customizer.pipeline import PipelineResult
 from .data import TagStore
 from .importer import SUPPORTED_EXTENSIONS
-from .customizer.pipeline import PipelineResult
 from .storage import AssetService
 from .ui import AssemblyPane, PreviewPane, TagSidebar
 
@@ -61,9 +66,7 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self._preview_pane.setObjectName("previewPane")
-        self._preview_pane.navigationRequested.connect(
-            self._handle_preview_navigation
-        )
+        self._preview_pane.navigationRequested.connect(self._handle_preview_navigation)
         self._preview_pane.customizationGenerated.connect(
             self._handle_customization_generated
         )
@@ -585,28 +588,52 @@ class MainWindow(QMainWindow):
         # Build component list from metadata["components"] entries
         meta = dict(asset.metadata or {})
         comps_raw = meta.get("components") or []
-        components = []
-        kinds = []
-        for entry in comps_raw:
-            try:
-                path = str(entry.get("path") or "").strip()
-                label = str(entry.get("label") or Path(path).name)
-                kind = str(entry.get("kind") or "component")
-            except Exception:
-                continue
-            if path:
-                components.append((path, label))
-                kinds.append(kind)
 
         from .ui.assembly_pane import AssemblyArrangement, AssemblyComponent
 
-        comp_objs = []
-        for (path, label), kind in zip(components, kinds, strict=False):
+        comp_objs: list[AssemblyComponent] = []
+        for entry in comps_raw:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                raw_path = entry.get("path")
+                path = str(raw_path or "").strip()
+            except Exception:
+                continue
+            if not path:
+                continue
+            raw_label = entry.get("label")
+            try:
+                label = str(raw_label).strip() if raw_label is not None else ""
+            except Exception:
+                label = ""
+            if not label:
+                try:
+                    label = Path(path).name
+                except Exception:
+                    label = path
+            try:
+                kind = str(entry.get("kind") or "component")
+            except Exception:
+                kind = "component"
+            metadata_entry = entry.get("metadata")
+            metadata_dict = metadata_entry if isinstance(metadata_entry, dict) else None
+            asset_id_value = entry.get("asset_id")
+            try:
+                asset_id = int(asset_id_value)
+            except Exception:
+                asset_id = None
             resolved_kind = (
                 kind if kind in {"component", "placeholder"} else "component"
             )
             comp_objs.append(
-                AssemblyComponent(path=path, label=label, kind=resolved_kind)
+                AssemblyComponent(
+                    path=path,
+                    label=label,
+                    kind=resolved_kind,
+                    metadata=metadata_dict,
+                    asset_id=asset_id,
+                )
             )
         arr_objs = []
         for entry in meta.get("arrangements") or []:
@@ -648,8 +675,15 @@ class MainWindow(QMainWindow):
             if not path_value:
                 continue
             label_text = str(a.get("label") or Path(path_value).name)
+            metadata_entry = a.get("metadata")
+            metadata_dict = metadata_entry if isinstance(metadata_entry, dict) else None
             att_objs.append(
-                AssemblyComponent(path=path_value, label=label_text, kind="attachment")
+                AssemblyComponent(
+                    path=path_value,
+                    label=label_text,
+                    kind="attachment",
+                    metadata=metadata_dict,
+                )
             )
 
         self._assembly_pane.set_assembly(
@@ -780,7 +814,7 @@ class MainWindow(QMainWindow):
         # Discover components within folder
         from .importer import SUPPORTED_EXTENSIONS
 
-        components: list[dict] = []
+        components: list[dict[str, Any]] = []
         parts_with_models: set[str] = set()
         for path in folder.rglob("*"):
             if not path.is_file():
@@ -799,11 +833,14 @@ class MainWindow(QMainWindow):
                 comp_label = parent.name if parent != folder else Path(record.path).stem
             except Exception:
                 comp_label = record.label
+            comp_metadata = build_component_metadata(record, assembly_root=folder)
             components.append(
                 {
                     "path": record.path,
                     "label": comp_label,
                     "kind": "component",
+                    "asset_id": record.id,
+                    "metadata": comp_metadata,
                 }
             )
 
@@ -819,6 +856,9 @@ class MainWindow(QMainWindow):
                         "path": str(sub),
                         "label": sub.name,
                         "kind": "placeholder",
+                        "metadata": build_placeholder_metadata(
+                            sub, assembly_root=folder
+                        ),
                     }
                 )
         except Exception:
@@ -841,19 +881,52 @@ class MainWindow(QMainWindow):
                 )
             except Exception:
                 preserved_arrangements = []
+        normalized_attachments: list[dict[str, Any]] = []
+        for entry in preserved_attachments:
+            if not isinstance(entry, dict):
+                continue
+            enriched = dict(entry)
+            raw_path = str(enriched.get("path") or "").strip()
+            existing_meta = (
+                enriched.get("metadata")
+                if isinstance(enriched.get("metadata"), dict)
+                else None
+            )
+            if raw_path:
+                enriched["metadata"] = build_attachment_metadata(
+                    raw_path,
+                    assembly_root=folder,
+                    existing_metadata=existing_meta,
+                )
+            normalized_attachments.append(enriched)
+        preserved_attachments = normalized_attachments
+
         try:
             arrangements = discover_arrangement_scripts(folder, preserved_arrangements)
         except Exception:
             arrangements = [dict(entry) for entry in preserved_arrangements]
-        metadata = {
-            "kind": "assembly",
-            "components": components,
-            "project": name,
-        }
+        base_metadata: dict[str, Any]
+        if existing is not None and isinstance(existing.metadata, dict):
+            base_metadata = dict(existing.metadata)
+        else:
+            base_metadata = {}
+
+        metadata = dict(base_metadata)
+        metadata.update(
+            {
+                "kind": "assembly",
+                "components": components,
+                "project": name,
+            }
+        )
         if preserved_attachments:
             metadata["attachments"] = preserved_attachments
+        else:
+            metadata.pop("attachments", None)
         if arrangements:
             metadata["arrangements"] = arrangements
+        else:
+            metadata.pop("arrangements", None)
         if existing is None:
             self._asset_service.create_asset(
                 str(folder),
@@ -953,6 +1026,11 @@ class MainWindow(QMainWindow):
                 entry["rel_path"] = str(dest.relative_to(assembly_folder))
             except Exception:
                 pass
+            entry["metadata"] = build_attachment_metadata(
+                dest,
+                assembly_root=assembly_folder,
+                source_path=source,
+            )
             added.append(entry)
 
         if not added:

@@ -224,9 +224,7 @@ class PreviewPane(QWidget):
         self._customization_summary_label.setWordWrap(True)
         customization_layout.addWidget(self._customization_summary_label)
 
-        self._customization_parameters_label = QLabel(
-            "", self._customization_frame
-        )
+        self._customization_parameters_label = QLabel("", self._customization_frame)
         self._customization_parameters_label.setWordWrap(True)
         self._customization_parameters_label.setObjectName(
             "previewCustomizationParameters"
@@ -735,9 +733,7 @@ class PreviewPane(QWidget):
             parts.append(f"{count} customized artifact{plural} available.")
             for derivative in derivatives[:3]:
                 label = derivative.label or Path(derivative.path).name
-                self._add_customization_action_button(
-                    f"Open {label}", derivative.path
-                )
+                self._add_customization_action_button(f"Open {label}", derivative.path)
         else:
             parts.append("No customized artifacts recorded yet.")
 
@@ -745,7 +741,8 @@ class PreviewPane(QWidget):
         if latest is not None:
             parts.append(
                 "Last run on "
-                f"{_format_datetime(latest.updated_at)} via {latest.backend_identifier}."
+                f"{_format_datetime(latest.updated_at)} via "
+                f"{latest.backend_identifier}."
             )
             parameter_html = self._format_parameter_summary(latest.parameter_values)
         elif (
@@ -823,29 +820,22 @@ class PreviewPane(QWidget):
                 ):
                     continue
                 label = derivative.label or Path(derivative.path).name
-                self._add_customization_action_button(
-                    f"Open {label}", derivative.path
-                )
+                self._add_customization_action_button(f"Open {label}", derivative.path)
                 if len(self._customization_action_buttons) >= 3:
                     break
 
         return parts, parameter_html
 
-    def _format_parameter_summary(
-        self, parameters: Mapping[str, Any] | None
-    ) -> str:
+    def _format_parameter_summary(self, parameters: Mapping[str, Any] | None) -> str:
         if not isinstance(parameters, Mapping) or not parameters:
             return ""
 
         items = []
         for name in sorted(parameters):
             value = parameters[name]
-            items.append(
-                "<li><b>{}</b>: {}</li>".format(
-                    html.escape(str(name)),
-                    html.escape(self._format_parameter_value(value)),
-                )
-            )
+            escaped_name = html.escape(str(name))
+            escaped_value = html.escape(self._format_parameter_value(value))
+            items.append(f"<li><b>{escaped_name}</b>: {escaped_value}</li>")
         return f"<ul>{''.join(items)}</ul>"
 
     def _format_parameter_value(self, value: Any) -> str:
@@ -1029,8 +1019,11 @@ class PreviewPane(QWidget):
         self._metadata_list.clear()
 
         for key, value in metadata:
-            item = QListWidgetItem(f"{key}: {value}")
+            display_value = self._stringify_metadata_value(value)
+            item = QListWidgetItem(f"{key}: {display_value}")
             item.setFlags(Qt.ItemIsEnabled)
+            if "\n" in display_value:
+                item.setToolTip(display_value)
             self._metadata_list.addItem(item)
 
         if self._asset_metadata:
@@ -1046,9 +1039,42 @@ class PreviewPane(QWidget):
             self._metadata_list.addItem(section)
 
             for key, value in self._asset_metadata.items():
-                item = QListWidgetItem(f"{key}: {value}")
+                display_value = self._stringify_metadata_value(value)
+                item = QListWidgetItem(f"{key}: {display_value}")
                 item.setFlags(Qt.ItemIsEnabled)
+                if "\n" in display_value:
+                    item.setToolTip(display_value)
                 self._metadata_list.addItem(item)
+
+    def _stringify_metadata_value(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple, set)):
+            parts: list[str] = []
+            for entry in value:
+                if isinstance(entry, Mapping):
+                    label = str(entry.get("label") or "").strip()
+                    target = entry.get("url") or entry.get("href") or entry.get("path")
+                    target_str = str(target or "").strip()
+                    if label and target_str:
+                        parts.append(f"{label}: {target_str}")
+                    elif target_str:
+                        parts.append(target_str)
+                    elif label:
+                        parts.append(label)
+                    else:
+                        parts.append(self._stringify_metadata_value(entry))
+                else:
+                    parts.append(self._stringify_metadata_value(entry))
+            return "\n".join(part for part in parts if part)
+        if isinstance(value, Mapping):
+            mapped: list[str] = []
+            for key, entry_value in value.items():
+                formatted = self._stringify_metadata_value(entry_value)
+                label = str(key)
+                mapped.append(f"{label}: {formatted}" if formatted else label)
+            return "\n".join(mapped)
+        return str(value)
 
 
 # ----------------------------------------------------------------------

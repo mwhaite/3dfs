@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,11 +14,13 @@ from PySide6.QtCore import (
     QSize,
     Qt,
     QThreadPool,
+    QUrl,
     Signal,
     Slot,
 )
 from PySide6.QtGui import (
     QColor,
+    QDesktopServices,
     QFont,
     QIcon,
     QImage,
@@ -45,12 +47,17 @@ from PySide6.QtWidgets import (
 from ..thumbnails import ThumbnailCache, ThumbnailGenerationError
 from .preview_pane import PreviewPane
 
+_METADATA_ROLE = Qt.UserRole + 2
+_ASSET_ID_ROLE = Qt.UserRole + 3
+
 
 @dataclass(slots=True)
 class AssemblyComponent:
     path: str
     label: str
     kind: str = "component"  # "component" or "attachment"
+    metadata: dict[str, Any] | None = None
+    asset_id: int | None = None
 
 
 @dataclass(slots=True)
@@ -179,6 +186,9 @@ class AssemblyPane(QWidget):
             item = QListWidgetItem(comp.label or comp.path)
             item.setData(Qt.UserRole, comp.path)
             item.setData(Qt.UserRole + 1, comp.kind)
+            item.setData(_METADATA_ROLE, comp.metadata or None)
+            if comp.asset_id is not None:
+                item.setData(_ASSET_ID_ROLE, comp.asset_id)
             item.setToolTip(comp.path)
             if comp.kind == "placeholder":
                 item.setIcon(QIcon(self._placeholder_icon()))
@@ -199,6 +209,7 @@ class AssemblyPane(QWidget):
                 item = QListWidgetItem(display)
                 item.setData(Qt.UserRole, arrangement.path)
                 item.setData(Qt.UserRole + 1, "arrangement")
+                item.setData(_METADATA_ROLE, arrangement.metadata or None)
                 tooltip_parts = []
                 if arrangement.description:
                     tooltip_parts.append(str(arrangement.description))
@@ -222,6 +233,7 @@ class AssemblyPane(QWidget):
                 item = QListWidgetItem(text)
                 item.setData(Qt.UserRole, att.path)
                 item.setData(Qt.UserRole + 1, att.kind)
+                item.setData(_METADATA_ROLE, att.metadata or None)
                 item.setToolTip(att.path)
                 self._components.addItem(item)
                 attach_paths.append(att.path)
@@ -248,10 +260,12 @@ class AssemblyPane(QWidget):
             self._preview.clear()
             return
         comp_path = str(current.data(Qt.UserRole) or current.text())
+        metadata_obj = current.data(_METADATA_ROLE)
+        metadata = metadata_obj if isinstance(metadata_obj, dict) else None
         self._preview.set_item(
             comp_path,
             label=current.text(),
-            metadata=None,
+            metadata=metadata,
             asset_record=None,
         )
         # Keep selection visible if filtered
@@ -338,7 +352,8 @@ class AssemblyPane(QWidget):
     # ------------------------------------------------------------------
     @Slot(QListWidgetItem)
     def _handle_component_activated(self, item: QListWidgetItem | None) -> None:
-        self._navigate_to_component(item)
+        if not self._navigate_to_component(item):
+            self._open_component_with_handler(item)
 
     def selected_item(self) -> tuple[str, str] | None:
         item = self._components.currentItem()
@@ -372,8 +387,23 @@ class AssemblyPane(QWidget):
         menu = QMenu(self)
         new_part_act = menu.addAction("New Part…")
         add_act = menu.addAction("Add Attachment(s) Here…")
+        open_item_act = menu.addAction("Open Item")
+        open_item_act.setEnabled(self._can_open_with_handler(item))
         open_assembly_act = menu.addAction("Open Assembly")
         open_assembly_act.setEnabled(navigate_target is not None)
+        upstream_links = self._extract_upstream_links(item)
+        open_source_act = None
+        if upstream_links:
+            open_source_act = menu.addAction("Open Upstream Source")
+        related_actions: dict[Any, dict[str, Any]] = {}
+        related_items = self._extract_related_items(item)
+        if related_items:
+            related_menu = menu.addMenu("Related Items")
+            for related in related_items:
+                label = related.get("label") or related.get("path") or "Related"
+                action = related_menu.addAction(label)
+                action.setData(related)
+                related_actions[action] = related
         open_act = menu.addAction("Open Containing Folder")
         action = menu.exec(self._components.mapToGlobal(pos))
         if action is None:
@@ -382,6 +412,8 @@ class AssemblyPane(QWidget):
             self.newPartRequested.emit()
         elif action == add_act:
             self.addAttachmentsRequested.emit()
+        elif action == open_item_act:
+            self._open_component_with_handler(item)
         elif action == open_assembly_act:
             if navigate_target is not None:
                 self.navigateToPathRequested.emit(navigate_target)
@@ -393,6 +425,10 @@ class AssemblyPane(QWidget):
                 self.openItemFolderRequested.emit(target)
             else:
                 self.openFolderRequested.emit()
+        elif open_source_act is not None and action == open_source_act:
+            self._open_upstream_link(upstream_links)
+        elif action in related_actions:
+            self._open_related_item(related_actions[action])
 
     def _navigate_to_component(self, item: QListWidgetItem | None) -> bool:
         target = self._resolve_component_navigation_target(item)
@@ -400,6 +436,152 @@ class AssemblyPane(QWidget):
             return False
         self.navigateToPathRequested.emit(target)
         return True
+
+    def _item_metadata(self, item: QListWidgetItem | None) -> dict[str, Any]:
+        if item is None:
+            return {}
+        metadata_obj = item.data(_METADATA_ROLE)
+        return metadata_obj if isinstance(metadata_obj, dict) else {}
+
+    def _absolute_path_for_item(self, item: QListWidgetItem | None) -> str | None:
+        if item is None:
+            return None
+        raw_path = item.data(Qt.UserRole)
+        if raw_path is None:
+            raw_path = item.text()
+        path_str = str(raw_path or "").strip()
+        if not path_str:
+            return None
+        try:
+            candidate = Path(path_str)
+        except Exception:
+            return None
+        base: Path | None = None
+        if self._assembly_path:
+            try:
+                base = Path(self._assembly_path)
+            except Exception:
+                base = None
+        try:
+            if base is not None and not candidate.is_absolute():
+                candidate = base / candidate
+        except Exception:
+            pass
+        try:
+            resolved = candidate.expanduser().resolve()
+        except Exception:
+            resolved = candidate.expanduser()
+        return str(resolved)
+
+    def _can_open_with_handler(self, item: QListWidgetItem | None) -> bool:
+        path = self._absolute_path_for_item(item)
+        if not path:
+            return False
+        try:
+            candidate = Path(path)
+            if candidate.exists():
+                if candidate.is_dir():
+                    return False
+                if candidate.is_file():
+                    return True
+        except Exception:
+            pass
+        metadata = self._item_metadata(item)
+        handler = str(metadata.get("handler") or "").strip().lower()
+        return bool(handler and handler != "none")
+
+    def _open_component_with_handler(self, item: QListWidgetItem | None) -> bool:
+        path = self._absolute_path_for_item(item)
+        if not path:
+            return False
+        metadata = self._item_metadata(item)
+        handler = str(metadata.get("handler") or "system").strip().lower()
+        if handler in {"", "none"}:
+            return False
+        if handler not in {"system", "openscad"}:
+            handler = "system"
+        url = QUrl.fromLocalFile(path)
+        return bool(QDesktopServices.openUrl(url))
+
+    def _extract_upstream_links(
+        self, item: QListWidgetItem | None
+    ) -> list[dict[str, str]]:
+        metadata = self._item_metadata(item)
+        raw_links = metadata.get("upstream_links")
+        links: list[dict[str, str]] = []
+        if isinstance(raw_links, dict):
+            raw_links = [raw_links]
+        if isinstance(raw_links, list):
+            for entry in raw_links:
+                if not isinstance(entry, dict):
+                    try:
+                        url = str(entry or "").strip()
+                    except Exception:
+                        continue
+                    if url:
+                        links.append({"url": url, "label": ""})
+                    continue
+                try:
+                    url = str(entry.get("url") or entry.get("href") or "").strip()
+                except Exception:
+                    url = ""
+                if not url:
+                    continue
+                label = str(entry.get("label") or "").strip()
+                links.append({"url": url, "label": label})
+        elif isinstance(raw_links, str):
+            url = raw_links.strip()
+            if url:
+                links.append({"url": url, "label": ""})
+        return links
+
+    def _open_upstream_link(self, links: list[dict[str, str]] | None) -> None:
+        if not links:
+            return
+        link = links[0]
+        url = str(link.get("url") or "").strip()
+        if not url:
+            return
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _extract_related_items(
+        self, item: QListWidgetItem | None
+    ) -> list[dict[str, Any]]:
+        metadata = self._item_metadata(item)
+        raw_related = metadata.get("related_items")
+        related: list[dict[str, Any]] = []
+        if isinstance(raw_related, dict):
+            raw_related = [raw_related]
+        if isinstance(raw_related, list):
+            for entry in raw_related:
+                if isinstance(entry, dict):
+                    path = str(entry.get("path") or "").strip()
+                    if not path:
+                        continue
+                    label = str(entry.get("label") or Path(path).name)
+                    relationship = str(entry.get("relationship") or "").strip()
+                    related.append(
+                        {"path": path, "label": label, "relationship": relationship}
+                    )
+                else:
+                    path = str(entry or "").strip()
+                    if not path:
+                        continue
+                    related.append({"path": path, "label": Path(path).name})
+        elif isinstance(raw_related, str):
+            path = raw_related.strip()
+            if path:
+                related.append({"path": path, "label": Path(path).name})
+        return related
+
+    def _open_related_item(self, payload: Mapping[str, Any] | dict[str, Any]) -> None:
+        path_value = payload.get("path") if isinstance(payload, Mapping) else None
+        try:
+            target = str(path_value or "").strip()
+        except Exception:
+            target = ""
+        if target:
+            self.navigateToPathRequested.emit(target)
 
     def _resolve_component_navigation_target(
         self, item: QListWidgetItem | None
