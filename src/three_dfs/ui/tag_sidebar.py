@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Slot
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -17,6 +19,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..data import TagStore
+from ..customizer.status import CustomizationStatus, evaluate_customization_status
+from ..storage import AssetService
 
 __all__ = ["TagSidebar"]
 
@@ -47,13 +51,19 @@ class TagSidebar(QWidget):
     searchRequested = Signal(str)
     """Emitted whenever the search query text changes."""
 
+    derivativeActivated = Signal(str)
+    """Emitted when a derivative asset is activated from the sidebar."""
+
     def __init__(
         self,
         store: TagStore | None = None,
+        *,
+        asset_service: AssetService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._store = store or TagStore()
+        self._asset_service = asset_service or getattr(self._store, "_service", None)
         self._active_item: str | None = None
         self._all_tags_for_item: list[str] = []
         self._known_tags: list[str] = []
@@ -82,6 +92,19 @@ class TagSidebar(QWidget):
         self._delete_button = QPushButton("Delete", self)
         self._delete_button.clicked.connect(self._handle_delete_tag)
 
+        self._derivatives_label = QLabel("Derived assets", self)
+        self._derivatives_label.setObjectName("tagSidebarDerivativesTitle")
+        self._derivatives_label.setVisible(False)
+
+        self._derivative_list = QListWidget(self)
+        self._derivative_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._derivative_list.itemActivated.connect(self._handle_derivative_activated)
+        self._derivative_list.itemDoubleClicked.connect(
+            self._handle_derivative_activated
+        )
+        self._derivative_list.setVisible(False)
+        self._derivative_list.setObjectName("tagSidebarDerivativesList")
+
         self._build_layout()
         self._update_ui_state()
         self._refresh_available_tags()
@@ -98,6 +121,7 @@ class TagSidebar(QWidget):
             # allows external callers to force a reload after out-of-band
             # modifications.
             self._load_tags_for_active_item()
+            self._refresh_derivatives()
             self._emit_tags_changed()
             return
 
@@ -105,6 +129,7 @@ class TagSidebar(QWidget):
         self._load_tags_for_active_item()
         self.activeItemChanged.emit(item_id)
         self._emit_tags_changed()
+        self._refresh_derivatives()
 
     def active_item(self) -> str | None:
         """Return the identifier of the item currently being edited."""
@@ -141,6 +166,8 @@ class TagSidebar(QWidget):
         button_row.addWidget(self._delete_button)
 
         layout.addLayout(button_row)
+        layout.addWidget(self._derivatives_label)
+        layout.addWidget(self._derivative_list)
 
     def _handle_search_changed(self, text: str) -> None:
         self._refresh_visible_tags()
@@ -276,7 +303,63 @@ class TagSidebar(QWidget):
             self._tag_list.addItem(tag)
 
     def _refresh_available_tags(self) -> None:
-        self._known_tags = self._store.all_tags()
+        try:
+            self._known_tags = self._store.all_tags()
+        except Exception:
+            self._known_tags = []
+
+    def _refresh_derivatives(self) -> None:
+        self._derivative_list.clear()
+        if self._asset_service is None or not self._active_item:
+            self._derivatives_label.setVisible(False)
+            self._derivative_list.setVisible(False)
+            return
+
+        try:
+            derivatives = self._asset_service.list_derivatives_for_asset(
+                self._active_item
+            )
+        except Exception:
+            derivatives = []
+
+        if not derivatives:
+            self._derivatives_label.setVisible(False)
+            self._derivative_list.setVisible(False)
+            return
+
+        base_path = Path(self._active_item)
+        for record in derivatives:
+            label = record.label or Path(record.path).name
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, record.path)
+            tooltip_parts = [record.path]
+            metadata = record.metadata if isinstance(record.metadata, dict) else {}
+            customization_meta = (
+                metadata.get("customization") if isinstance(metadata, dict) else None
+            )
+            if isinstance(customization_meta, dict):
+                try:
+                    status = evaluate_customization_status(
+                        customization_meta, base_path=base_path
+                    )
+                except Exception:
+                    status = None
+                if status is not None:
+                    tooltip_parts.append(status.reason)
+            item.setToolTip("\n".join(tooltip_parts))
+            self._derivative_list.addItem(item)
+
+        count = self._derivative_list.count()
+        self._derivatives_label.setText(f"Derived assets ({count})")
+        self._derivatives_label.setVisible(True)
+        self._derivative_list.setVisible(True)
+
+    def _handle_derivative_activated(self, item: QListWidgetItem | None) -> None:
+        if item is None:
+            return
+        target = item.data(Qt.UserRole) or item.text()
+        if target:
+            self.derivativeActivated.emit(str(target))
 
     def _update_ui_state(self) -> None:
         has_item = self._active_item is not None

@@ -38,6 +38,22 @@ utility for embossing arbitrary STL files (`emboss_utility.scad`) and a
 demonstration corner bracket (`demo_parametric_bracket.scad`) that highlights a
 variety of parameter types available to the customizer.
 
+## Desktop workflow
+
+The desktop shell now surfaces customization metadata directly within the
+preview pane. Selecting a supported source file (for example an OpenSCAD
+script) enables the **Customize…** action and presents a summary panel that
+lists recent derivative artefacts along with the parameters that produced
+them.  The summary includes quick-launch buttons so you can jump to generated
+assets or reopen the customizer dialog pre-populated with the previous
+settings.
+
+Launching the dialog instantiates the embedded `CustomizerPanel` inside a
+modal window, preserving the familiar sliders and toggles while delegating run
+execution to `execute_customization`.  Successful runs automatically refresh
+the preview summary and the new derivatives list in the tag sidebar, keeping
+related artefacts one click away without requiring a manual library rescan.
+
 ## Adapting additional engines
 
 Extending the system to support another parametric modelling engine—such as a
