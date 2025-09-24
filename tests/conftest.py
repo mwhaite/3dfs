@@ -6,7 +6,11 @@ import sys
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QApplication
+
+try:  # pragma: no cover - dependency availability varies between environments
+    from PySide6.QtWidgets import QApplication
+except ImportError:  # pragma: no cover - used when Qt is unavailable
+    QApplication = None  # type: ignore[assignment]
 
 # Ensure the source directory is importable without requiring an editable install.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +33,9 @@ def reset_app_config() -> None:
 @pytest.fixture(scope="session")
 def qapp():
     """Provide a ``QApplication`` instance for UI-oriented tests."""
+
+    if QApplication is None:
+        pytest.skip("PySide6 is unavailable in this environment")
 
     app = QApplication.instance()
     if app is None:
