@@ -105,6 +105,7 @@ class AssemblyPane(QWidget):
         self._components.customContextMenuRequested.connect(
             self._show_components_context_menu
         )
+        self._components.itemActivated.connect(self._handle_component_activated)
 
         self._preview = PreviewPane(parent=self)
 
@@ -335,6 +336,10 @@ class AssemblyPane(QWidget):
     # ------------------------------------------------------------------
     # Selection + Context Menu (class methods)
     # ------------------------------------------------------------------
+    @Slot(QListWidgetItem)
+    def _handle_component_activated(self, item: QListWidgetItem | None) -> None:
+        self._navigate_to_component(item)
+
     def selected_item(self) -> tuple[str, str] | None:
         item = self._components.currentItem()
         if item is None:
@@ -363,9 +368,12 @@ class AssemblyPane(QWidget):
             item = None
         if item is not None:
             self._components.setCurrentItem(item)
+        navigate_target = self._resolve_component_navigation_target(item)
         menu = QMenu(self)
         new_part_act = menu.addAction("New Part…")
         add_act = menu.addAction("Add Attachment(s) Here…")
+        open_assembly_act = menu.addAction("Open Assembly")
+        open_assembly_act.setEnabled(navigate_target is not None)
         open_act = menu.addAction("Open Containing Folder")
         action = menu.exec(self._components.mapToGlobal(pos))
         if action is None:
@@ -374,6 +382,9 @@ class AssemblyPane(QWidget):
             self.newPartRequested.emit()
         elif action == add_act:
             self.addAttachmentsRequested.emit()
+        elif action == open_assembly_act:
+            if navigate_target is not None:
+                self.navigateToPathRequested.emit(navigate_target)
         elif action == open_act:
             target = None
             if item is not None:
@@ -382,6 +393,74 @@ class AssemblyPane(QWidget):
                 self.openItemFolderRequested.emit(target)
             else:
                 self.openFolderRequested.emit()
+
+    def _navigate_to_component(self, item: QListWidgetItem | None) -> bool:
+        target = self._resolve_component_navigation_target(item)
+        if not target:
+            return False
+        self.navigateToPathRequested.emit(target)
+        return True
+
+    def _resolve_component_navigation_target(
+        self, item: QListWidgetItem | None
+    ) -> str | None:
+        if item is None:
+            return None
+        if not (item.flags() & Qt.ItemIsSelectable):
+            return None
+        raw_path = item.data(Qt.UserRole)
+        if raw_path is None:
+            raw_path = item.text()
+        path_str = str(raw_path or "").strip()
+        if not path_str:
+            return None
+        raw_kind = item.data(Qt.UserRole + 1)
+        kind = str(raw_kind or "component").strip().casefold()
+        if kind in {"attachment", "arrangement"}:
+            return None
+        is_placeholder = kind == "placeholder"
+        is_assembly_kind = kind == "assembly"
+        base_path: Path | None = None
+        if self._assembly_path:
+            try:
+                base_path = Path(self._assembly_path)
+            except Exception:
+                base_path = None
+        try:
+            candidate_path = Path(path_str)
+            if base_path is not None and not candidate_path.is_absolute():
+                candidate_path = base_path / candidate_path
+            candidate_path = candidate_path.expanduser()
+        except Exception:
+            candidate_path = None
+
+        def _resolve_path(path_obj: Path) -> str:
+            try:
+                resolved = path_obj.expanduser().resolve()
+            except Exception:
+                resolved = path_obj.expanduser()
+            return str(resolved)
+
+        if candidate_path is None:
+            if not (is_placeholder or is_assembly_kind):
+                return None
+            try:
+                fallback = Path(path_str)
+                if base_path is not None and not fallback.is_absolute():
+                    fallback = base_path / fallback
+            except Exception:
+                return None
+            return _resolve_path(fallback)
+
+        try:
+            if candidate_path.is_dir():
+                return _resolve_path(candidate_path)
+        except Exception:
+            pass
+
+        if is_placeholder or is_assembly_kind:
+            return _resolve_path(candidate_path)
+        return None
 
     # ------------------------------------------------------------------
     # Drag & drop support for attachments (class methods)
