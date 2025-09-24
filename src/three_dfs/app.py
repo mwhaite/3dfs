@@ -26,6 +26,7 @@ from .assembly import discover_arrangement_scripts
 from .config import get_config
 from .data import TagStore
 from .importer import SUPPORTED_EXTENSIONS
+from .customizer.pipeline import PipelineResult
 from .storage import AssetService
 from .ui import AssemblyPane, PreviewPane, TagSidebar
 
@@ -41,7 +42,9 @@ class MainWindow(QMainWindow):
 
         self._asset_service = AssetService()
         self._tag_store = TagStore(service=self._asset_service)
-        self._tag_sidebar = TagSidebar(self._tag_store)
+        self._tag_sidebar = TagSidebar(
+            self._tag_store, asset_service=self._asset_service
+        )
         self._repository_list = QListWidget(self)
         self._repository_list.setObjectName("repositoryList")
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -58,6 +61,12 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self._preview_pane.setObjectName("previewPane")
+        self._preview_pane.navigationRequested.connect(
+            self._handle_preview_navigation
+        )
+        self._preview_pane.customizationGenerated.connect(
+            self._handle_customization_generated
+        )
 
         # Assembly pane shares the right split area via a stacked layout
         self._assembly_pane = AssemblyPane(self)
@@ -156,6 +165,7 @@ class MainWindow(QMainWindow):
         self._repository_list.currentItemChanged.connect(self._handle_selection_change)
         self._tag_sidebar.searchRequested.connect(self._handle_search_request)
         self._tag_sidebar.tagsChanged.connect(self._handle_tags_changed)
+        self._tag_sidebar.derivativeActivated.connect(self._handle_preview_navigation)
 
     def _populate_repository(self) -> None:
         """Populate the repository view with persisted asset entries."""
@@ -679,6 +689,55 @@ class MainWindow(QMainWindow):
         self._apply_repository_filters()
         self.statusBar().showMessage(f"{len(tags)} tag(s) assigned to {item_id}", 2000)
 
+    def _handle_preview_navigation(self, target_path: str) -> None:
+        if not target_path:
+            return
+        normalized = str(target_path)
+        if self._select_repository_path(normalized):
+            return
+
+        asset = self._asset_service.get_asset_by_path(normalized)
+        if asset is None:
+            self.statusBar().showMessage(f"Asset not found: {normalized}", 4000)
+            return
+
+        self._preview_pane.set_item(
+            asset.path,
+            label=asset.label,
+            metadata=asset.metadata,
+            asset_record=asset,
+        )
+        self._detail_stack.setCurrentWidget(self._preview_pane)
+        self._tag_sidebar.set_active_item(asset.path)
+        self._current_asset = asset
+
+    def _handle_customization_generated(self, payload: object) -> None:
+        result = payload if isinstance(payload, PipelineResult) else None
+        if result is None:
+            return
+
+        current_item = self._repository_list.currentItem()
+        current_path = (
+            str(current_item.data(Qt.UserRole) or current_item.text())
+            if current_item is not None
+            else None
+        )
+
+        self._populate_repository()
+        self._apply_repository_filters()
+        if current_path:
+            self._select_repository_path(current_path)
+
+        artifact_count = len(result.artifacts)
+        noun = "artifact" if artifact_count == 1 else "artifacts"
+        self.statusBar().showMessage(
+            f"Generated {artifact_count} customized {noun}.", 5000
+        )
+
+        active_item = self._tag_sidebar.active_item()
+        if active_item:
+            self._tag_sidebar.set_active_item(active_item)
+
     def _apply_repository_filters(self) -> None:
         raw_text = (
             self._repo_search_input.text()
@@ -1042,15 +1101,27 @@ class MainWindow(QMainWindow):
             item = self._repository_list.itemAt(pos)
         except Exception:
             item = None
+        if item is not None:
+            try:
+                self._repository_list.setCurrentItem(item)
+            except Exception:
+                pass
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
+        customize_act = None
+        if self._preview_pane.can_customize:
+            customize_act = menu.addAction("Customize…")
+            menu.addSeparator()
         new_assembly_act = menu.addAction("New Empty Assembly…")
         open_assembly_act = menu.addAction("Open as Assembly")
         open_folder_act = menu.addAction("Open Containing Folder")
         global_pos = self._repository_list.mapToGlobal(pos)
         action = menu.exec(global_pos)
         if action is None:
+            return
+        if action == customize_act:
+            self._preview_pane.launch_customizer()
             return
         if action == new_assembly_act:
             self._new_empty_assembly_dialog()
@@ -1113,6 +1184,16 @@ class MainWindow(QMainWindow):
         # Toggle repo container visibility and adjust splitter automatically
         if getattr(self, "_repo_container", None) is not None:
             self._repo_container.setVisible(bool(show))
+
+    def _select_repository_path(self, target_path: str) -> bool:
+        normalized = str(target_path)
+        for row in range(self._repository_list.count()):
+            item = self._repository_list.item(row)
+            item_path = str(item.data(Qt.UserRole) or item.text())
+            if item_path == normalized:
+                self._repository_list.setCurrentItem(item)
+                return True
+        return False
 
     def _new_empty_assembly_dialog(self) -> None:
         from PySide6.QtWidgets import QInputDialog, QMessageBox

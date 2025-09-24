@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import html
 import io
 import logging
 import mimetypes
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,9 +18,12 @@ from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QSizePolicy,
     QStackedLayout,
     QTabWidget,
@@ -27,7 +32,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..customizer import ParameterSchema
 from ..customizer.openscad import OpenSCADBackend
+from ..customizer.pipeline import PipelineResult
 from ..customizer.status import (
     CustomizationStatus,
     evaluate_customization_status,
@@ -38,11 +45,12 @@ from ..thumbnails import (
     ThumbnailGenerationError,
     ThumbnailResult,
 )
+from .customizer_dialog import CustomizerDialog, CustomizerSessionConfig
 from .customizer_panel import CustomizerPanel
 from .model_viewer import ModelViewer
 
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
-    from ..storage import AssetRecord, AssetService
+    from ..storage import AssetRecord, AssetService, CustomizationRecord
 
 __all__ = ["PreviewPane"]
 
@@ -143,6 +151,12 @@ class PreviewWorker(QRunnable):
 class PreviewPane(QWidget):
     """Widget responsible for rendering previews of repository assets."""
 
+    navigationRequested = Signal(str)
+    """Emitted when the preview requests navigation to another asset."""
+
+    customizationGenerated = Signal(object)
+    """Emitted when a customization pipeline run completes successfully."""
+
     def __init__(
         self,
         base_path: str | Path | None = None,
@@ -166,10 +180,26 @@ class PreviewPane(QWidget):
         self._asset_metadata: dict[str, Any] = {}
         self._asset_record: AssetRecord | None = None
         self._workers: dict[int, PreviewWorker] = {}
+        self._customizer_context: CustomizerSessionConfig | None = None
+        self._customizer_dialog: CustomizerDialog | None = None
+        self._customization_action_buttons: list[QPushButton] = []
 
         self._title_label = QLabel("Preview", self)
         self._title_label.setObjectName("previewTitle")
         self._title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        self._customize_button = QPushButton("Customize…", self)
+        self._customize_button.setObjectName("previewCustomizeButton")
+        self._customize_button.setVisible(False)
+        self._customize_button.setEnabled(False)
+        self._customize_button.clicked.connect(self.launch_customizer)
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(6)
+        header_row.addWidget(self._title_label)
+        header_row.addStretch(1)
+        header_row.addWidget(self._customize_button)
 
         self._path_label = QLabel("", self)
         self._path_label.setObjectName("previewPath")
@@ -181,6 +211,37 @@ class PreviewPane(QWidget):
         self._description_label.setWordWrap(True)
         self._description_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self._description_label.setVisible(False)
+
+        self._customization_frame = QFrame(self)
+        self._customization_frame.setObjectName("previewCustomizationFrame")
+        self._customization_frame.setFrameShape(QFrame.StyledPanel)
+        self._customization_frame.setVisible(False)
+        customization_layout = QVBoxLayout(self._customization_frame)
+        customization_layout.setContentsMargins(8, 6, 8, 6)
+        customization_layout.setSpacing(6)
+
+        self._customization_summary_label = QLabel("", self._customization_frame)
+        self._customization_summary_label.setWordWrap(True)
+        customization_layout.addWidget(self._customization_summary_label)
+
+        self._customization_parameters_label = QLabel(
+            "", self._customization_frame
+        )
+        self._customization_parameters_label.setWordWrap(True)
+        self._customization_parameters_label.setObjectName(
+            "previewCustomizationParameters"
+        )
+        self._customization_parameters_label.setVisible(False)
+        customization_layout.addWidget(self._customization_parameters_label)
+
+        self._customization_actions_widget = QWidget(self._customization_frame)
+        self._customization_actions_layout = QHBoxLayout(
+            self._customization_actions_widget
+        )
+        self._customization_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self._customization_actions_layout.setSpacing(6)
+        self._customization_actions_widget.setVisible(False)
+        customization_layout.addWidget(self._customization_actions_widget)
 
         self._message_label = QLabel("Select an item to preview", self)
         self._message_label.setAlignment(Qt.AlignCenter)
@@ -212,6 +273,9 @@ class PreviewPane(QWidget):
         self._customizer_panel = CustomizerPanel(
             asset_service=self._asset_service,
             parent=self,
+        )
+        self._customizer_panel.customizationSucceeded.connect(
+            self._handle_customizer_success
         )
         self._customizer_tab_index = self._tabs.addTab(
             self._customizer_panel,
@@ -250,9 +314,10 @@ class PreviewPane(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
-        layout.addWidget(self._title_label)
+        layout.addLayout(header_row)
         layout.addWidget(self._path_label)
         layout.addWidget(self._description_label)
+        layout.addWidget(self._customization_frame)
         layout.addLayout(self._stack, 1)
 
         self._show_message("Select an item to preview")
@@ -281,6 +346,14 @@ class PreviewPane(QWidget):
         self._tabs.setTabEnabled(self._readme_tab_index, False)
         self._tabs.setTabEnabled(self._customizer_tab_index, False)
         self._customizer_panel.clear()
+        self._customizer_context = None
+        self._customize_button.setVisible(False)
+        self._customize_button.setEnabled(False)
+        self._customization_summary_label.clear()
+        self._customization_parameters_label.clear()
+        self._customization_parameters_label.setVisible(False)
+        self._customization_frame.setVisible(False)
+        self._clear_customization_actions()
         self._show_message("Select an item to preview")
 
     def set_item(
@@ -321,6 +394,14 @@ class PreviewPane(QWidget):
         self._current_pixmap = None
         self._current_thumbnail_message = None
         self._thumbnail_label.setToolTip("")
+        self._customizer_context = None
+        self._customize_button.setVisible(False)
+        self._customize_button.setEnabled(False)
+        self._customization_summary_label.clear()
+        self._customization_parameters_label.clear()
+        self._customization_parameters_label.setVisible(False)
+        self._customization_frame.setVisible(False)
+        self._clear_customization_actions()
 
         # Prepare viewer tab
         suffix = absolute_path.suffix.lower()
@@ -421,38 +502,426 @@ class PreviewPane(QWidget):
     def _prepare_customizer(self, absolute_path: Path) -> None:
         self._tabs.setTabEnabled(self._customizer_tab_index, False)
         self._customizer_panel.clear()
+        context = self._build_customizer_context(absolute_path)
+        self._customizer_context = context
+
+        if context is not None:
+            try:
+                self._customizer_panel.set_session(
+                    backend=context.backend,
+                    schema=context.schema,
+                    source_path=context.source_path,
+                    base_asset=context.base_asset,
+                    values=context.values,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to initialise customizer for %s", absolute_path
+                )
+                self._customizer_context = None
+            else:
+                self._tabs.setTabEnabled(self._customizer_tab_index, True)
+
+        self._refresh_customization_summary(absolute_path)
+
+    def _build_customizer_context(
+        self, absolute_path: Path
+    ) -> CustomizerSessionConfig | None:
+        if self._asset_service is None:
+            return None
 
         suffix = absolute_path.suffix.lower()
-        if suffix != ".scad":
-            return
+        if suffix == ".scad" and self._asset_record is not None:
+            return self._build_context_for_source(absolute_path, self._asset_record)
 
+        metadata = self._asset_metadata
+        customization_meta = (
+            metadata.get("customization") if isinstance(metadata, Mapping) else None
+        )
+        if isinstance(customization_meta, Mapping):
+            return self._build_context_for_derivative(customization_meta)
+        return None
+
+    def _build_context_for_source(
+        self, absolute_path: Path, asset: AssetRecord
+    ) -> CustomizerSessionConfig | None:
         backend = OpenSCADBackend()
         try:
             schema = backend.load_schema(absolute_path)
         except Exception:
             logger.exception("Failed to load OpenSCAD schema for %s", absolute_path)
-            return
+            return None
 
         if not schema.parameters:
-            return
+            return None
 
+        latest = self._latest_customization_for_path(asset.path)
         values: Mapping[str, Any] | None = None
-        metadata = (
-            self._asset_metadata.get("customization") if self._asset_metadata else None
-        )
-        if isinstance(metadata, Mapping):
-            maybe_values = metadata.get("parameters")
-            if isinstance(maybe_values, Mapping):
-                values = maybe_values
+        customization_id = None
+        if latest is not None:
+            values = dict(latest.parameter_values)
+            customization_id = latest.id
+        else:
+            metadata = (
+                asset.metadata.get("customization")
+                if isinstance(asset.metadata, Mapping)
+                else None
+            )
+            if isinstance(metadata, Mapping):
+                maybe_values = metadata.get("parameters")
+                if isinstance(maybe_values, Mapping):
+                    values = dict(maybe_values)
 
-        self._customizer_panel.set_session(
+        return CustomizerSessionConfig(
             backend=backend,
             schema=schema,
             source_path=absolute_path,
-            base_asset=self._asset_record,
+            base_asset=asset,
             values=values,
+            customization_id=customization_id,
         )
-        self._tabs.setTabEnabled(self._customizer_tab_index, True)
+
+    def _build_context_for_derivative(
+        self, customization_meta: Mapping[str, Any]
+    ) -> CustomizerSessionConfig | None:
+        if self._asset_service is None:
+            return None
+
+        backend_identifier = str(customization_meta.get("backend") or "")
+        backend = self._backend_from_identifier(backend_identifier)
+        if backend is None:
+            return None
+
+        base_path = customization_meta.get("base_asset_path")
+        if not isinstance(base_path, str) or not base_path.strip():
+            return None
+        base_path = base_path.strip()
+        base_asset = self._asset_service.get_asset_by_path(base_path)
+        if base_asset is None:
+            return None
+
+        source_path = Path(base_asset.path).expanduser()
+        record: CustomizationRecord | None = None
+        customization_id = customization_meta.get("id")
+        if customization_id is not None:
+            try:
+                record = self._fetch_customization_record(int(customization_id))
+            except Exception:
+                record = None
+
+        schema: ParameterSchema | None = None
+        values: Mapping[str, Any] | None = None
+        if record is not None:
+            schema = ParameterSchema.from_dict(record.parameter_schema)
+            values = dict(record.parameter_values)
+            customization_id = record.id
+        else:
+            try:
+                schema = backend.load_schema(source_path)
+            except Exception:
+                logger.exception(
+                    "Failed to load customizer schema for base %s", source_path
+                )
+                return None
+            maybe_values = customization_meta.get("parameters")
+            if isinstance(maybe_values, Mapping):
+                values = dict(maybe_values)
+
+        if schema is None or not schema.parameters:
+            return None
+
+        normalized_id = (
+            int(customization_id)
+            if customization_id is not None and str(customization_id).strip()
+            else None
+        )
+
+        return CustomizerSessionConfig(
+            backend=backend,
+            schema=schema,
+            source_path=source_path,
+            base_asset=base_asset,
+            values=values,
+            customization_id=normalized_id,
+        )
+
+    def _backend_from_identifier(self, identifier: str) -> OpenSCADBackend | None:
+        normalized = identifier.strip().casefold()
+        if normalized in {"openscad", "three_dfs.customizer.openscad"}:
+            return OpenSCADBackend()
+        return None
+
+    def _latest_customization_for_path(
+        self, base_path: str
+    ) -> CustomizationRecord | None:
+        if self._asset_service is None:
+            return None
+        try:
+            records = self._asset_service.list_customizations_for_asset(base_path)
+        except Exception:
+            return None
+        if not records:
+            return None
+        return max(records, key=lambda record: record.updated_at)
+
+    def _fetch_customization_record(
+        self, customization_id: int
+    ) -> CustomizationRecord | None:
+        if self._asset_service is None:
+            return None
+        try:
+            return self._asset_service.get_customization(customization_id)
+        except Exception:
+            return None
+
+    def _list_derivatives_for_path(self, base_path: str) -> list[AssetRecord]:
+        if self._asset_service is None:
+            return []
+        try:
+            return self._asset_service.list_derivatives_for_asset(base_path)
+        except Exception:
+            return []
+
+    def _refresh_customization_summary(self, absolute_path: Path) -> None:
+        self._clear_customization_actions()
+
+        summary_parts: list[str] = []
+        parameter_html = ""
+
+        suffix = absolute_path.suffix.lower()
+        if suffix == ".scad" and self._asset_record is not None:
+            summary_parts, parameter_html = self._summarize_base_asset(
+                self._asset_record
+            )
+        else:
+            summary_parts, parameter_html = self._summarize_derivative()
+
+        if self._customizer_context is not None:
+            button_label = "Customize…" if suffix == ".scad" else "Reopen Customizer…"
+            self._customize_button.setText(button_label)
+            self._customize_button.setEnabled(True)
+            self._customize_button.setVisible(True)
+            self._customize_button.setToolTip("")
+        else:
+            self._customize_button.setEnabled(False)
+            self._customize_button.setVisible(False)
+
+        if summary_parts:
+            self._customization_summary_label.setText(" ".join(summary_parts))
+        else:
+            self._customization_summary_label.clear()
+
+        if parameter_html:
+            self._customization_parameters_label.setText(parameter_html)
+            self._customization_parameters_label.setVisible(True)
+        else:
+            self._customization_parameters_label.clear()
+            self._customization_parameters_label.setVisible(False)
+
+        actions_visible = bool(self._customization_action_buttons)
+        self._customization_actions_widget.setVisible(actions_visible)
+        self._customization_frame.setVisible(
+            bool(summary_parts or parameter_html or actions_visible)
+        )
+
+    def _summarize_base_asset(self, asset: AssetRecord) -> tuple[list[str], str]:
+        parts: list[str] = []
+        parameter_html = ""
+
+        derivatives = self._list_derivatives_for_path(asset.path)
+        if derivatives:
+            count = len(derivatives)
+            plural = "s" if count != 1 else ""
+            parts.append(f"{count} customized artifact{plural} available.")
+            for derivative in derivatives[:3]:
+                label = derivative.label or Path(derivative.path).name
+                self._add_customization_action_button(
+                    f"Open {label}", derivative.path
+                )
+        else:
+            parts.append("No customized artifacts recorded yet.")
+
+        latest = self._latest_customization_for_path(asset.path)
+        if latest is not None:
+            parts.append(
+                "Last run on "
+                f"{_format_datetime(latest.updated_at)} via {latest.backend_identifier}."
+            )
+            parameter_html = self._format_parameter_summary(latest.parameter_values)
+        elif (
+            self._customizer_context is not None
+            and self._customizer_context.values is not None
+        ):
+            parameter_html = self._format_parameter_summary(
+                self._customizer_context.values
+            )
+
+        return parts, parameter_html
+
+    def _summarize_derivative(self) -> tuple[list[str], str]:
+        parts: list[str] = []
+        parameter_html = ""
+
+        metadata = self._asset_metadata
+        customization_meta = (
+            metadata.get("customization") if isinstance(metadata, Mapping) else None
+        )
+        if not isinstance(customization_meta, Mapping):
+            return parts, parameter_html
+
+        base_path_raw = customization_meta.get("base_asset_path")
+        base_label_raw = customization_meta.get("base_asset_label")
+        base_path = base_path_raw.strip() if isinstance(base_path_raw, str) else None
+        descriptor = (
+            base_label_raw.strip()
+            if isinstance(base_label_raw, str) and base_label_raw.strip()
+            else None
+        )
+        if descriptor is None and base_path:
+            descriptor = Path(base_path).name
+
+        generated_at = _parse_iso_datetime(customization_meta.get("generated_at"))
+        if descriptor:
+            if generated_at is not None:
+                parts.append(
+                    f"Derived from {descriptor} on {_format_datetime(generated_at)}."
+                )
+            else:
+                parts.append(f"Derived from {descriptor}.")
+        elif generated_at is not None:
+            parts.append(f"Customized on {_format_datetime(generated_at)}.")
+
+        try:
+            status = evaluate_customization_status(
+                customization_meta,
+                base_path=Path(base_path) if base_path else None,
+            )
+        except Exception:
+            status_text = None
+        else:
+            status_text = _format_customization_status(status)
+        if status_text:
+            parts.append(status_text)
+
+        relationship = customization_meta.get("relationship")
+        if isinstance(relationship, str) and relationship.strip():
+            parts.append(f"Relationship: {relationship.strip()}.")
+
+        parameters = customization_meta.get("parameters")
+        if isinstance(parameters, Mapping):
+            parameter_html = self._format_parameter_summary(parameters)
+
+        if base_path:
+            descriptor_text = descriptor or base_path
+            self._add_customization_action_button(
+                f"View base: {descriptor_text}", base_path
+            )
+            for derivative in self._list_derivatives_for_path(base_path):
+                if (
+                    self._asset_record is not None
+                    and derivative.path == self._asset_record.path
+                ):
+                    continue
+                label = derivative.label or Path(derivative.path).name
+                self._add_customization_action_button(
+                    f"Open {label}", derivative.path
+                )
+                if len(self._customization_action_buttons) >= 3:
+                    break
+
+        return parts, parameter_html
+
+    def _format_parameter_summary(
+        self, parameters: Mapping[str, Any] | None
+    ) -> str:
+        if not isinstance(parameters, Mapping) or not parameters:
+            return ""
+
+        items = []
+        for name in sorted(parameters):
+            value = parameters[name]
+            items.append(
+                "<li><b>{}</b>: {}</li>".format(
+                    html.escape(str(name)),
+                    html.escape(self._format_parameter_value(value)),
+                )
+            )
+        return f"<ul>{''.join(items)}</ul>"
+
+    def _format_parameter_value(self, value: Any) -> str:
+        if isinstance(value, float):
+            return f"{value:.4g}"
+        return str(value)
+
+    def _add_customization_action_button(self, text: str, target_path: str) -> None:
+        if not target_path:
+            return
+        button = QPushButton(text, self._customization_actions_widget)
+        button.setObjectName("previewCustomizationAction")
+        button.clicked.connect(partial(self._handle_navigation, target_path))
+        self._customization_actions_layout.addWidget(button)
+        self._customization_action_buttons.append(button)
+        self._customization_actions_widget.setVisible(True)
+
+    def _clear_customization_actions(self) -> None:
+        while self._customization_actions_layout.count():
+            item = self._customization_actions_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._customization_action_buttons.clear()
+        self._customization_actions_widget.setVisible(False)
+
+    def _handle_navigation(self, target_path: str) -> None:
+        self.navigationRequested.emit(target_path)
+
+    def _ensure_customizer_dialog(self) -> CustomizerDialog:
+        if self._customizer_dialog is None:
+            if self._asset_service is None:
+                raise RuntimeError("Customization requires an AssetService instance")
+            dialog = CustomizerDialog(asset_service=self._asset_service, parent=self)
+            dialog.customizationSucceeded.connect(self._handle_customizer_success)
+            self._customizer_dialog = dialog
+        return self._customizer_dialog
+
+    def launch_customizer(self) -> None:
+        context = self._customizer_context
+        if context is None:
+            return
+        dialog = self._ensure_customizer_dialog()
+        dialog.set_session(context)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _handle_customizer_success(self, result: object) -> None:
+        pipeline_result = result if isinstance(result, PipelineResult) else None
+        if pipeline_result is None:
+            return
+
+        if self._asset_service is not None:
+            try:
+                refreshed = self._asset_service.get_asset_by_path(
+                    pipeline_result.base_asset.path
+                )
+            except Exception:
+                refreshed = None
+            if (
+                refreshed is not None
+                and self._asset_record is not None
+                and refreshed.path == self._asset_record.path
+            ):
+                self._asset_record = refreshed
+                self._asset_metadata = dict(refreshed.metadata)
+
+        if self._current_absolute_path is not None:
+            self._prepare_customizer(self._current_absolute_path)
+
+        self.customizationGenerated.emit(pipeline_result)
+
+    @property
+    def can_customize(self) -> bool:
+        return self._customizer_context is not None
 
     def _show_message(self, text: str) -> None:
         self._message_label.setText(text)
@@ -534,6 +1003,8 @@ class PreviewPane(QWidget):
             self._thumbnail_label.setToolTip(message)
 
         self._populate_metadata(outcome.metadata)
+        if self._current_absolute_path is not None:
+            self._prepare_customizer(self._current_absolute_path)
 
     def _update_thumbnail_display(self) -> None:
         if self._current_pixmap is None or self._current_pixmap.isNull():

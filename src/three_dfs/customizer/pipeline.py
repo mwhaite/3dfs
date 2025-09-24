@@ -283,7 +283,7 @@ def _build_asset_metadata(
     generated_at = datetime.now(UTC).isoformat()
     try:
         source_modified_at = datetime.fromtimestamp(
-            source_path.stat().st_mtime,
+            Path(base_asset.path).stat().st_mtime,
             tz=UTC,
         ).isoformat()
     except OSError:
