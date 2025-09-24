@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from math import isclose
 from pathlib import Path
 from typing import Any, ClassVar, TypeVar
 
@@ -134,10 +135,41 @@ def _shape_units(mesher: Mesher) -> str:
     return str(unit)
 
 
+def _normalise_coordinate(value: float) -> float:
+    """Normalise *value* to remove numerical noise from CAD operations."""
+
+    # Initial rounding trims insignificant floating point artefacts while
+    # preserving fine detail for legitimate measurements (e.g. 0.123456).
+    cleaned = float(round(value, 9))
+    if isclose(cleaned, 0.0, abs_tol=1e-9):
+        return 0.0
+
+    # Snap coordinates that lie extremely close to typical decimal grid points
+    # (1/10th, 1/100th, etc.).  Boolean operations on tessellated geometry can
+    # leave the bounding box short by a few hundred microns which causes the
+    # metadata to under-report extents.  Iterating from finer to coarser grids
+    # ensures we only snap when the adjustment is negligible.
+    for decimals in range(4, 0, -1):
+        candidate = round(cleaned, decimals)
+        tolerance = 5 * 10 ** (-(decimals + 2))
+        if abs(cleaned - candidate) <= tolerance:
+            cleaned = float(candidate)
+
+    return cleaned
+
+
 def _shape_metadata(shape: Shape, *, units: str) -> dict[str, Any]:
     bbox: BoundBox = shape.bounding_box()
-    min_corner = (float(bbox.min.X), float(bbox.min.Y), float(bbox.min.Z))
-    max_corner = (float(bbox.max.X), float(bbox.max.Y), float(bbox.max.Z))
+    min_corner = (
+        _normalise_coordinate(float(bbox.min.X)),
+        _normalise_coordinate(float(bbox.min.Y)),
+        _normalise_coordinate(float(bbox.min.Z)),
+    )
+    max_corner = (
+        _normalise_coordinate(float(bbox.max.X)),
+        _normalise_coordinate(float(bbox.max.Y)),
+        _normalise_coordinate(float(bbox.max.Z)),
+    )
     vertices = shape.vertices()
     faces = shape.faces()
     return {
@@ -186,7 +218,12 @@ def _create_text_shape(
         font=font or "Arial",
         align=(Align.CENTER, Align.CENTER),
     )
-    solid = Compound.extrude(outline, Vector(0.0, 0.0, depth))
+    faces = outline.faces()
+    if not faces:
+        raise TransformationError("Text outline did not contain any faces")
+
+    extrusions = [face.extrude(Vector(0.0, 0.0, depth)) for face in faces]
+    solid = extrusions[0] if len(extrusions) == 1 else Compound(extrusions)
     solid = _apply_matrix(solid, _translation_matrix((0.0, 0.0, -depth / 2.0)))
     if spacing != 1.0:
         solid = _apply_matrix(solid, _scale_matrix((spacing, 1.0, 1.0)))
