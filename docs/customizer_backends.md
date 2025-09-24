@@ -46,3 +46,10 @@ Build123D-based workflow—only requires translating that tool's metadata into a
 engine should be executed.  The resulting `CustomizerSession` integrates with
 the shared execution pipeline, enabling consistent storage and reproducibility
 across all backends.
+
+Backends that rely on auxiliary resources (for example Build123D Python
+scripts) can declare these dependencies by returning `GeneratedArtifact`
+entries with the `asset_id` field populated.  The pipeline links such artifacts
+to the customization without copying or mutating the original asset metadata,
+allowing reproducible builds while keeping script sources managed alongside
+their owning library entries.
