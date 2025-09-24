@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Any
+from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
@@ -94,4 +95,3 @@ class CustomizerDialog(QDialog):
     # ------------------------------------------------------------------
     def _handle_success(self, result: object) -> None:
         self.customizationSucceeded.emit(result)
-

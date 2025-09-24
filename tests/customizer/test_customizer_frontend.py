@@ -6,8 +6,8 @@ import pytest
 from PySide6.QtTest import QSignalSpy
 
 from three_dfs.customizer.openscad import OpenSCADBackend
-from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
 from three_dfs.data import TagStore
+from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
 from three_dfs.ui.customizer_dialog import CustomizerDialog, CustomizerSessionConfig
 from three_dfs.ui.customizer_panel import (
     BooleanParameterWidget,
