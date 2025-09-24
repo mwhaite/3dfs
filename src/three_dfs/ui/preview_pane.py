@@ -86,6 +86,26 @@ _MODEL_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
+_TEXT_PREVIEW_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".cfg",
+        ".csv",
+        ".ini",
+        ".json",
+        ".log",
+        ".md",
+        ".markdown",
+        ".py",
+        ".rst",
+        ".scad",
+        ".txt",
+        ".yaml",
+        ".yml",
+    }
+)
+
+_TEXT_PREVIEW_MAX_BYTES = 200_000
+
 
 @dataclass(slots=True)
 class PreviewOutcome:
@@ -97,6 +117,9 @@ class PreviewOutcome:
     thumbnail_message: str | None = None
     thumbnail_info: dict[str, Any] | None = None
     asset_record: AssetRecord | None = None
+    text_content: str | None = None
+    text_role: str | None = None
+    text_truncated: bool = False
 
 
 class PreviewWorkerSignals(QObject):
@@ -268,6 +291,10 @@ class PreviewPane(QWidget):
         self._readme_view = QTextEdit(self)
         self._readme_view.setReadOnly(True)
         self._readme_tab_index = self._tabs.addTab(self._readme_view, "README")
+        self._text_view = QTextEdit(self)
+        self._text_view.setObjectName("previewText")
+        self._text_view.setReadOnly(True)
+        self._text_tab_index = self._tabs.addTab(self._text_view, "Text")
         self._customizer_panel = CustomizerPanel(
             asset_service=self._asset_service,
             parent=self,
@@ -281,6 +308,7 @@ class PreviewPane(QWidget):
         )
         self._tabs.setTabEnabled(self._viewer_tab_index, False)
         self._tabs.setTabEnabled(self._readme_tab_index, False)
+        self._tabs.setTabEnabled(self._text_tab_index, False)
         self._tabs.setTabEnabled(self._customizer_tab_index, False)
 
         self._metadata_title = QLabel("File details", self)
@@ -342,6 +370,9 @@ class PreviewPane(QWidget):
         self._thumbnail_label.setToolTip("")
         self._tabs.setTabEnabled(self._viewer_tab_index, False)
         self._tabs.setTabEnabled(self._readme_tab_index, False)
+        self._tabs.setTabEnabled(self._text_tab_index, False)
+        self._text_view.clear()
+        self._tabs.setTabText(self._text_tab_index, "Text")
         self._tabs.setTabEnabled(self._customizer_tab_index, False)
         self._customizer_panel.clear()
         self._customizer_context = None
@@ -400,6 +431,9 @@ class PreviewPane(QWidget):
         self._customization_parameters_label.setVisible(False)
         self._customization_frame.setVisible(False)
         self._clear_customization_actions()
+        self._text_view.clear()
+        self._tabs.setTabText(self._text_tab_index, "Text")
+        self._tabs.setTabEnabled(self._text_tab_index, False)
 
         # Prepare viewer tab
         suffix = absolute_path.suffix.lower()
@@ -843,6 +877,10 @@ class PreviewPane(QWidget):
             return f"{value:.4g}"
         return str(value)
 
+    # ------------------------------------------------------------------
+    # Text preview helpers (instance level)
+    # ------------------------------------------------------------------
+
     def _add_customization_action_button(self, text: str, target_path: str) -> None:
         if not target_path:
             return
@@ -992,9 +1030,32 @@ class PreviewPane(QWidget):
             self._current_thumbnail_message = message
             self._thumbnail_label.setToolTip(message)
 
+        self._configure_text_preview(outcome)
         self._populate_metadata(outcome.metadata)
         if self._current_absolute_path is not None:
             self._prepare_customizer(self._current_absolute_path)
+
+    def _configure_text_preview(self, outcome: PreviewOutcome) -> None:
+        if outcome.text_content is None:
+            self._text_view.clear()
+            self._tabs.setTabText(self._text_tab_index, "Text")
+            self._tabs.setTabEnabled(self._text_tab_index, False)
+            self._text_view.setToolTip("")
+            return
+
+        tab_label = _text_tab_label(outcome.text_role)
+        self._text_view.setPlainText(outcome.text_content)
+        self._tabs.setTabText(self._text_tab_index, tab_label)
+        self._tabs.setTabEnabled(self._text_tab_index, True)
+        if outcome.text_truncated:
+            self._text_view.setToolTip("Preview truncated for large file")
+        else:
+            self._text_view.setToolTip("")
+
+        if self._current_pixmap is None and not self._tabs.isTabEnabled(
+            self._viewer_tab_index
+        ):
+            self._tabs.setCurrentIndex(self._text_tab_index)
 
     def _update_thumbnail_display(self) -> None:
         if self._current_pixmap is None or self._current_pixmap.isNull():
@@ -1078,6 +1139,87 @@ class PreviewPane(QWidget):
 
 
 # ----------------------------------------------------------------------
+# Text preview helpers
+# ----------------------------------------------------------------------
+
+
+def _text_tab_label(role: str | None) -> str:
+    if role == "openscad":
+        return "OpenSCAD"
+    if role == "build123d":
+        return "Build123D"
+    if role == "python":
+        return "Script"
+    return "Text"
+
+
+def _textual_thumbnail_message(role: str | None) -> str:
+    if role is None:
+        return "No thumbnail available for this file type."
+    tab_label = _text_tab_label(role)
+    return f"View content in the {tab_label} tab."
+
+
+def _extract_text_preview(
+    path: Path, mime_type: str | None
+) -> tuple[str | None, str | None, bool]:
+    suffix = path.suffix.lower()
+    if suffix in _IMAGE_EXTENSIONS or suffix in _MODEL_EXTENSIONS:
+        return None, None, False
+
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(_TEXT_PREVIEW_MAX_BYTES + 1)
+    except OSError:
+        return None, None, False
+
+    if not raw:
+        role = _detect_text_role(path, mime_type, "")
+        return "", role, False
+
+    if b"\x00" in raw:
+        return None, None, False
+
+    truncated = len(raw) > _TEXT_PREVIEW_MAX_BYTES
+    if truncated:
+        raw = raw[:_TEXT_PREVIEW_MAX_BYTES]
+
+    text = raw.decode("utf-8", errors="replace")
+    role = _detect_text_role(path, mime_type, text)
+    if role is None:
+        return None, None, False
+
+    if truncated:
+        text += "\n… (preview truncated)"
+
+    return text, role, truncated
+
+
+def _detect_text_role(path: Path, mime_type: str | None, text: str) -> str | None:
+    suffix = path.suffix.lower()
+
+    if suffix == ".scad":
+        return "openscad"
+
+    lowered = text.lower()
+    if suffix == ".py":
+        if "build123d" in lowered:
+            return "build123d"
+        return "python"
+
+    if mime_type and mime_type.startswith("text/"):
+        return "text"
+
+    if suffix in _TEXT_PREVIEW_EXTENSIONS:
+        return "text"
+
+    if lowered and lowered.strip():
+        return "text"
+
+    return None
+
+
+# ----------------------------------------------------------------------
 # Preview helpers executed in background threads
 # ----------------------------------------------------------------------
 
@@ -1094,14 +1236,17 @@ def _build_preview_outcome(
     if not path.exists():
         raise FileNotFoundError(f"{path} does not exist")
 
+    mime_type, _ = mimetypes.guess_type(path.name)
+
+    text_content, text_role, truncated = _extract_text_preview(path, mime_type)
+
     metadata: list[tuple[str, str]] = []
     stat = path.stat()
-    metadata.append(("Kind", _classify_kind(path)))
+    metadata.append(("Kind", _classify_kind(path, text_role)))
     metadata.append(("Size", _format_size(stat.st_size)))
     metadata.append(("Modified", _format_timestamp(stat.st_mtime)))
     metadata.append(("Location", str(path)))
 
-    mime_type, _ = mimetypes.guess_type(path.name)
     if mime_type:
         metadata.append(("MIME Type", mime_type))
 
@@ -1116,6 +1261,10 @@ def _build_preview_outcome(
             )
         )
 
+    if text_content is not None:
+        preview_status = "Truncated" if truncated else "Complete"
+        metadata.append(("Text Preview", f"{preview_status} content available"))
+
     if suffix in _IMAGE_EXTENSIONS:
         image_metadata, thumbnail_bytes = _build_image_preview(path)
         metadata.extend(image_metadata)
@@ -1123,6 +1272,9 @@ def _build_preview_outcome(
             path=path,
             metadata=metadata,
             thumbnail_bytes=thumbnail_bytes,
+            text_content=text_content,
+            text_role=text_role,
+            text_truncated=truncated,
         )
 
     if suffix in _MODEL_EXTENSIONS:
@@ -1148,6 +1300,9 @@ def _build_preview_outcome(
             thumbnail_message=message,
             thumbnail_info=thumbnail_info,
             asset_record=updated_asset,
+            text_content=text_content,
+            text_role=text_role,
+            text_truncated=truncated,
         )
 
     metadata.append(("Type", path.suffix or "Unknown"))
@@ -1155,7 +1310,10 @@ def _build_preview_outcome(
         path=path,
         metadata=metadata,
         thumbnail_bytes=None,
-        thumbnail_message="No thumbnail available for this file type.",
+        thumbnail_message=_textual_thumbnail_message(text_role),
+        text_content=text_content,
+        text_role=text_role,
+        text_truncated=truncated,
     )
 
 
@@ -1535,12 +1693,24 @@ def _create_model_placeholder(extension: str) -> bytes:
     return buffer.getvalue()
 
 
-def _classify_kind(path: Path) -> str:
+def _classify_kind(path: Path, text_role: str | None = None) -> str:
     suffix = path.suffix.lower()
     if suffix in _IMAGE_EXTENSIONS:
         return "Image"
     if suffix in _MODEL_EXTENSIONS:
         return "3D Model"
+    if text_role == "openscad":
+        return "OpenSCAD Source"
+    if text_role == "build123d":
+        return "Build123D Script"
+    if text_role == "python":
+        return "Python Script"
+    if text_role == "text":
+        return "Text Document"
+    if suffix == ".scad":
+        return "OpenSCAD Source"
+    if suffix == ".py":
+        return "Python Script"
     return "File"
 
 
