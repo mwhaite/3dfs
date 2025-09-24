@@ -63,6 +63,7 @@ class MainWindow(QMainWindow):
         self._assembly_pane = AssemblyPane(self)
         self._assembly_pane.setObjectName("assemblyPane")
         # Wire assembly pane actions
+        self._assembly_pane.newPartRequested.connect(self._create_new_part)
         self._assembly_pane.addAttachmentsRequested.connect(
             self._add_assembly_attachments
         )

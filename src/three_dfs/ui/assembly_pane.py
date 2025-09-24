@@ -454,6 +454,32 @@ class AssemblyPane(QWidget):
         self._readme.clear()
         self._readme.setVisible(False)
 
+    def _placeholder_icon(self) -> QPixmap:
+        """Return an icon for placeholder components."""
+
+        # Red exclamation badge icon for parts without a model
+        w, h = self._icon_size.width(), self._icon_size.height()
+        img = QImage(w, h, QImage.Format_ARGB32)
+        img.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(img)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            # Background circle
+            painter.setBrush(QColor(255, 64, 64))
+            painter.setPen(QColor(0, 0, 0, 0))
+            margin = int(min(w, h) * 0.12)
+            painter.drawEllipse(margin, margin, w - 2 * margin, h - 2 * margin)
+            # Exclamation mark
+            painter.setPen(QColor(255, 255, 255))
+            font = QFont()
+            font.setBold(True)
+            font.setPointSize(int(min(w, h) * 0.6))
+            painter.setFont(font)
+            painter.drawText(0, int(h * 0.08), w, h, Qt.AlignCenter, "!")
+        finally:
+            painter.end()
+        return QPixmap.fromImage(img)
+
 
 class _IconWorkerSignals(QObject):
     result = Signal(str, object)
@@ -593,125 +619,3 @@ class _IconWorker(QRunnable):
         if c and not c.startswith("image/"):
             return (c.split("/")[-1][:4].upper(), (110, 110, 110))
         return ("", (0, 0, 0))
-
-    # Selection helpers
-    def selected_item(self) -> tuple[str, str] | None:
-        item = self._components.currentItem()
-        if item is None:
-            return None
-        path = str(item.data(Qt.UserRole) or "").strip()
-        kind = str(item.data(Qt.UserRole + 1) or "component")
-        return (path, kind)
-
-    @Slot()
-    def _show_components_context_menu(self, pos) -> None:
-        try:
-            item = self._components.itemAt(pos)
-        except Exception:
-            item = None
-        if item is not None:
-            self._components.setCurrentItem(item)
-        menu = QMenu(self)
-        add_act = menu.addAction("Add Attachment(s) Here…")
-        open_act = menu.addAction("Open Containing Folder")
-        action = menu.exec(self._components.mapToGlobal(pos))
-        if action is None:
-            return
-        if action == add_act:
-            self.addAttachmentsRequested.emit()
-        elif action == open_act:
-            target = None
-            if item is not None:
-                target = str(item.data(Qt.UserRole) or "").strip()
-            if target:
-                self.openItemFolderRequested.emit(target)
-            else:
-                self.openFolderRequested.emit()
-
-    # ------------------------------------------------------------------
-    # Drag & drop support for attachments
-    # ------------------------------------------------------------------
-    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
-        md = event.mimeData()
-        if md is not None and md.hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
-        md = event.mimeData()
-        if md is not None and md.hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event) -> None:  # type: ignore[override]
-        md = event.mimeData()
-        if md is None or not md.hasUrls():
-            super().dropEvent(event)
-            return
-        paths: list[str] = []
-        for url in md.urls():
-            try:
-                local = url.toLocalFile()
-            except Exception:
-                local = ""
-            if local:
-                paths.append(local)
-        if paths:
-            self.filesDropped.emit(paths)
-            event.acceptProposedAction()
-        else:
-            super().dropEvent(event)
-
-    def _load_readme(self, folder: Path) -> None:
-        base = folder if folder.is_dir() else folder.parent
-        candidates = (
-            "README.md",
-            "Readme.md",
-            "readme.md",
-            "README.txt",
-            "readme.txt",
-            "README",
-        )
-        for name in candidates:
-            p = base / name
-            try:
-                if not p.exists() or not p.is_file():
-                    continue
-                content = p.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            try:
-                self._readme.setMarkdown(content)
-            except Exception:
-                self._readme.setPlainText(content)
-            self._readme.setVisible(True)
-            return
-        self._readme.clear()
-        self._readme.setVisible(False)
-
-    def _placeholder_icon(self) -> QPixmap:
-        # Red exclamation badge icon for parts without a model
-        w, h = self._icon_size.width(), self._icon_size.height()
-        img = QImage(w, h, QImage.Format_ARGB32)
-        img.fill(QColor(0, 0, 0, 0))
-        p = QPainter(img)
-        try:
-            p.setRenderHint(QPainter.Antialiasing, True)
-            # Background circle
-            bg = QColor(255, 64, 64)
-            p.setBrush(bg)
-            p.setPen(QColor(0, 0, 0, 0))
-            margin = int(min(w, h) * 0.12)
-            p.drawEllipse(margin, margin, w - 2 * margin, h - 2 * margin)
-            # Exclamation mark
-            p.setPen(QColor(255, 255, 255))
-            font = QFont()
-            font.setBold(True)
-            font.setPointSize(int(min(w, h) * 0.6))
-            p.setFont(font)
-            p.drawText(0, int(h * 0.08), w, h, Qt.AlignCenter, "!")
-        finally:
-            p.end()
-        return QPixmap.fromImage(img)
