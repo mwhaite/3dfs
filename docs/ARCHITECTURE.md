@@ -12,6 +12,7 @@ flowchart TD
   subgraph UI[UI (PySide6)]
     SIDEBAR[Tag Sidebar]
     PREVIEW[Preview Pane]
+    ASSEMBLY[Assembly Pane]
     IMPORT[Import Dialog]
   end
   APP --> UI
@@ -32,13 +33,12 @@ flowchart TD
   IMP -->|metadata merge| SVC
 
   subgraph Storage
-    SVC[Storage Service]
+    SVC[Asset Service]
     REPO[Repository]
-    SA[SQLAlchemy Session]
-    DB[(SQLite: assets, tags, asset_tags)]
+    DB[(SQLite: assets, tags, customizations, relationships)]
   end
   UI -->|query| SVC
-  SVC --> REPO --> SA --> DB
+  SVC --> REPO --> DB
   SVC -->|records| UI
 
   subgraph Thumbnails
@@ -49,20 +49,36 @@ flowchart TD
   TH -->|read| ASSETS
   TH -->|write| TC
 
+  WATCHER[Filesystem Watcher]
+  APP --> WATCHER
+  WATCHER --> ASSEMBLY
+
+  subgraph Customizer
+    DIALOG[Customizer Panel]
+    PIPE[Execution Pipeline]
+  end
+  PREVIEW -->|Customize…| DIALOG
+  DIALOG -->|plan + run| PIPE
+  PIPE -->|persist derivatives| SVC
+  PIPE -->|copy artifacts| ASSETS
+
   subgraph Filesystem
     ASSETS
     TC
   end
 
   SIDEBAR -->|tag ops| SVC
+  ASSEMBLY -->|component metadata| SVC
 ```
 
 Notes
-- Entrypoints: `three-dfs` and `python -m three_dfs` initialize UI and services.
-- Importer: resolves local files or delegates to plugins (`can_handle`, `fetch`), then merges metadata.
-- Storage: service/repository wrap SQLAlchemy models and handle transactions.
-- Thumbnails: generate on-demand from assets; cache writes to filesystem.
-- Data: SQLite tables (`assets`, `tags`, `asset_tags`); files under managed asset and thumbnail paths.
+- Entrypoints: `three-dfs` and `python -m three_dfs` initialize the PySide6 shell, asset services, and filesystem watchers.
+- Importer: resolves local files or delegates to plugins (`can_handle`, `fetch`), then merges returned metadata into managed assets.
+- Storage: the asset service wraps the repository layer which persists records directly in SQLite (assets, tags, customizations, relationships).
+- Thumbnails: generated on demand from assets and cached on disk for fast redraws.
+- Customizer: the preview pane launches the embedded panel which runs the execution pipeline and records derivative assets.
+- Assemblies: the app watches assembly folders for changes so the pane can refresh components and arrangement scripts automatically.
+- Data: managed assets and thumbnails live under the configured library root; metadata and tags reside in `~/.3dfs/assets.sqlite3`.
 
 Local commands
 - Setup: `source setup.sh` (activates) or `./setup.sh --activate`
