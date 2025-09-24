@@ -21,6 +21,7 @@ from ..storage import (
     AssetRelationshipRecord,
     AssetService,
     CustomizationRecord,
+    build_asset_metadata,
 )
 from . import CustomizerBackend, GeneratedArtifact
 
@@ -229,6 +230,8 @@ def execute_customization(
     finally:
         if cleanup:
             shutil.rmtree(work_directory, ignore_errors=True)
+
+
 def _resolve_source_path(base_asset: AssetRecord) -> Path:
     candidates: list[Path] = []
     metadata = getattr(base_asset, "metadata", {}) or {}
@@ -280,14 +283,15 @@ def _build_asset_metadata(
         ).isoformat()
     except OSError:
         source_modified_at = None
-    metadata: dict[str, Any] = {
-        "source": base_asset.path,
-        "source_type": "customization",
-        "original_path": str(source_path),
-        "managed_path": str(destination),
-        "size": destination.stat().st_size,
-        "generated_at": generated_at,
-    }
+    size = destination.stat().st_size
+    metadata = build_asset_metadata(
+        source=base_asset.path,
+        source_type="customization",
+        original_path=source_path,
+        managed_path=destination,
+        size=size,
+        timestamps={"generated_at": generated_at},
+    )
 
     if artifact.content_type:
         metadata["content_type"] = artifact.content_type

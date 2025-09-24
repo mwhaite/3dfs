@@ -132,6 +132,8 @@ def import_asset(
         service=service,
         attempted_local_resolution=attempted_local_resolution,
     )
+
+
 def _import_local_asset(
     source: Path,
     identifier: str,
@@ -140,6 +142,8 @@ def _import_local_asset(
     *,
     service: AssetService | None,
 ) -> AssetRecord:
+    from .storage.metadata import build_asset_metadata
+
     extension = source.suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
         raise UnsupportedAssetTypeError(
@@ -150,15 +154,16 @@ def _import_local_asset(
     destination = _allocate_destination(managed_root, source.name)
     shutil.copy2(source, destination)
 
-    metadata = {
-        "source": identifier,
-        "original_path": str(source),
-        "managed_path": str(destination),
-        "extension": extension.lstrip(".").upper(),
-        "size": destination.stat().st_size,
-        "imported_at": imported_at,
-        "source_type": "local",
-    }
+    size = destination.stat().st_size
+    metadata = build_asset_metadata(
+        source=identifier,
+        source_type="local",
+        original_path=source,
+        managed_path=destination,
+        size=size,
+        timestamps={"imported_at": imported_at},
+        extra={"extension": extension.lstrip(".").upper()},
+    )
     metadata.update(_extract_format_metadata(destination, extension))
 
     return _persist_record(destination, metadata, label=source.stem, service=service)
@@ -172,6 +177,8 @@ def _import_remote_asset(
     service: AssetService | None,
     attempted_local_resolution: bool,
 ) -> AssetRecord:
+    from .storage.metadata import build_asset_metadata
+
     plugin = get_plugin_for(identifier)
     if plugin is None:
         if attempted_local_resolution:
@@ -242,17 +249,21 @@ def _import_remote_asset(
     plugin_label = str(plugin_label_value) if plugin_label_value is not None else None
     plugin_identifier = f"{plugin.__class__.__module__}.{plugin.__class__.__qualname__}"
 
-    metadata = {
-        "source": identifier,
-        "original_path": identifier,
-        "managed_path": str(final_path),
-        "extension": extension.lstrip(".").upper(),
-        "size": final_path.stat().st_size,
-        "imported_at": imported_at,
-        "source_type": "remote",
-        "remote_source": identifier,
-        "import_plugin": plugin_identifier,
-    }
+    size = final_path.stat().st_size
+    base_metadata = build_asset_metadata(
+        source=identifier,
+        source_type="remote",
+        original_path=identifier,
+        managed_path=final_path,
+        size=size,
+        timestamps={"imported_at": imported_at},
+        extra={
+            "extension": extension.lstrip(".").upper(),
+            "remote_source": identifier,
+            "import_plugin": plugin_identifier,
+        },
+    )
+    metadata = dict(base_metadata)
 
     reserved_keys = {
         "filename",
@@ -267,14 +278,14 @@ def _import_remote_asset(
         plugin_metadata.pop(key, None)
 
     metadata.update(plugin_metadata)
-    metadata["managed_path"] = str(final_path)
-    metadata["extension"] = extension.lstrip(".").upper()
-    metadata["size"] = final_path.stat().st_size
-    metadata["imported_at"] = imported_at
-    metadata.setdefault("remote_source", identifier)
-    metadata.setdefault("original_path", identifier)
-    metadata.setdefault("source_type", "remote")
-    metadata.setdefault("source", identifier)
+    metadata["managed_path"] = base_metadata["managed_path"]
+    metadata["extension"] = base_metadata["extension"]
+    metadata["size"] = base_metadata["size"]
+    metadata["imported_at"] = base_metadata["imported_at"]
+    metadata.setdefault("remote_source", base_metadata["remote_source"])
+    metadata.setdefault("original_path", base_metadata["original_path"])
+    metadata.setdefault("source_type", base_metadata["source_type"])
+    metadata.setdefault("source", base_metadata["source"])
 
     metadata.update(_extract_format_metadata(final_path, extension))
 
