@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..utils.paths import coerce_optional_path
+
 __all__ = ["CustomizationStatus", "evaluate_customization_status"]
 
 
@@ -62,7 +64,7 @@ def _resolve_base_path(
     base_path: str | Path | None,
 ) -> Path | None:
     if base_path is not None:
-        return _coerce_path(base_path)
+        return coerce_optional_path(base_path)
 
     candidates = (
         metadata.get("base_asset_path"),
@@ -70,19 +72,9 @@ def _resolve_base_path(
         metadata.get("base_asset"),
     )
     for candidate in candidates:
-        path = _coerce_path(candidate)
+        path = coerce_optional_path(candidate)
         if path is not None:
             return path
-    return None
-
-
-def _coerce_path(candidate: Any) -> Path | None:
-    if isinstance(candidate, Path):
-        return candidate.expanduser()
-    if isinstance(candidate, str):
-        stripped = candidate.strip()
-        if stripped:
-            return Path(stripped).expanduser()
     return None
 
 
