@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("PySide6.QtTest", exc_type=ImportError)
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+
 from PySide6.QtTest import QSignalSpy
 
 from three_dfs.customizer.openscad import OpenSCADBackend

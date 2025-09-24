@@ -25,7 +25,7 @@ _MINIMAL_PNG = (
 )
 
 
-@dataclass(slots=True)
+@dataclass
 class StubBackend(CustomizerBackend):
     """Test backend that emits a mesh artifact and a preview image."""
 
@@ -104,7 +104,7 @@ class StubBackend(CustomizerBackend):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ScriptReferenceBackend(StubBackend):
     """Stub backend that also links an existing Python script artifact."""
 

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+pytest.importorskip("PySide6.QtCore", exc_type=ImportError)
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+
 from PySide6.QtCore import Qt
 
 from three_dfs.ui.assembly_pane import AssemblyComponent, AssemblyPane
