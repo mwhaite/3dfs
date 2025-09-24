@@ -22,6 +22,8 @@ LIBRARY_ROOT_ENV_VAR: Final[str] = "THREE_DFS_LIBRARY_PATH"
 
 DEFAULT_LIBRARY_ROOT: Final[Path] = Path.home() / "Models"
 """Default filesystem path where the asset library is stored."""
+
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     """Runtime configuration for the 3dfs application."""
