@@ -15,6 +15,7 @@ from ..importer import (
     _resolve_plugin_destination,
     default_storage_root,
 )
+from ..paths import resolve_storage_root
 from ..storage import (
     AssetRecord,
     AssetRelationshipRecord,
@@ -75,7 +76,10 @@ def execute_customization(
         debugging purposes.
     """
 
-    managed_root = _resolve_storage_root(storage_root)
+    managed_root = resolve_storage_root(
+        storage_root,
+        default=default_storage_root,
+    )
     base_path = _resolve_source_path(base_asset)
     backend_identifier = _backend_identifier(backend)
 
@@ -225,18 +229,6 @@ def execute_customization(
     finally:
         if cleanup:
             shutil.rmtree(work_directory, ignore_errors=True)
-
-
-def _resolve_storage_root(storage_root: str | Path | None) -> Path:
-    if storage_root is None:
-        return default_storage_root()
-
-    candidate = Path(storage_root).expanduser()
-    if not candidate.is_absolute():
-        candidate = candidate.resolve()
-    return candidate
-
-
 def _resolve_source_path(base_asset: AssetRecord) -> Path:
     candidates: list[Path] = []
     metadata = getattr(base_asset, "metadata", {}) or {}

@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - dependency guaranteed in production
 
 from .config import get_config
 from .import_plugins import get_plugin_for
+from .paths import resolve_storage_root
 
 if TYPE_CHECKING:  # pragma: no cover - used for type checking only
     from .storage import AssetRecord, AssetService
@@ -109,7 +110,10 @@ def import_asset(
                 raise AssetImportError(f"Asset {resolved!s} is not a file")
             source = resolved
 
-    managed_root = _resolve_storage_root(storage_root)
+    managed_root = resolve_storage_root(
+        storage_root,
+        default=default_storage_root,
+    )
     imported_at = datetime.now(UTC).isoformat()
 
     if source is not None:
@@ -128,18 +132,6 @@ def import_asset(
         service=service,
         attempted_local_resolution=attempted_local_resolution,
     )
-
-
-def _resolve_storage_root(storage_root: Path | str | None) -> Path:
-    if storage_root is None:
-        return default_storage_root()
-
-    candidate = Path(storage_root).expanduser()
-    if not candidate.is_absolute():
-        candidate = candidate.resolve()
-    return candidate
-
-
 def _import_local_asset(
     source: Path,
     identifier: str,
