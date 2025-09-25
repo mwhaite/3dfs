@@ -1110,7 +1110,7 @@ class PreviewPane(QWidget):
     def _stringify_metadata_value(self, value: Any) -> str:
         if value is None:
             return ""
-        if isinstance(value, (list, tuple, set)):
+        if isinstance(value, list | tuple | set):
             parts: list[str] = []
             for entry in value:
                 if isinstance(entry, Mapping):
