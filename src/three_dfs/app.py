@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer
+from PySide6.QtCore import (
+    QFileSystemWatcher,
+    QObject,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -32,10 +42,196 @@ from .config import get_config
 from .customizer.pipeline import PipelineResult
 from .data import TagStore
 from .importer import SUPPORTED_EXTENSIONS
-from .storage import AssetService
+from .storage import AssetRecord, AssetService
 from .ui import AssemblyPane, PreviewPane, TagSidebar
 
 WINDOW_TITLE: Final[str] = "3dfs"
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class AssemblyRefreshRequest:
+    """Describe follow-up actions after refreshing an assembly."""
+
+    select_in_repo: bool = False
+    show_assembly: bool = False
+    focus_component: str | None = None
+
+
+@dataclass(slots=True)
+class AssemblyScanOutcome:
+    """Result produced by :class:`AssemblyScanWorker`."""
+
+    folder: Path
+    asset: AssetRecord
+    component_count: int
+
+
+class AssemblyScanWorkerSignals(QObject):
+    """Signals emitted by :class:`AssemblyScanWorker`."""
+
+    finished = Signal(object)
+    error = Signal(str, str)
+
+
+class AssemblyScanWorker(QRunnable):
+    """Background task that scans an assembly folder and updates metadata."""
+
+    def __init__(
+        self,
+        folder: Path,
+        asset_service: AssetService,
+        existing: AssetRecord | None = None,
+    ) -> None:
+        super().__init__()
+        self._folder = folder
+        self._asset_service = asset_service
+        self._existing = existing
+        self.signals = AssemblyScanWorkerSignals()
+
+    def run(self) -> None:  # pragma: no cover - exercised indirectly
+        try:
+            outcome = _scan_assembly_folder(
+                self._folder, self._asset_service, self._existing
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to refresh assembly at %s", self._folder)
+            message = str(exc) or exc.__class__.__name__
+            self.signals.error.emit(str(self._folder), message)
+        else:
+            self.signals.finished.emit(outcome)
+
+
+def _scan_assembly_folder(
+    folder: Path,
+    asset_service: AssetService,
+    existing: AssetRecord | None,
+) -> AssemblyScanOutcome:
+    """Return refreshed metadata for *folder* and persist it."""
+
+    folder = folder.expanduser().resolve()
+    name = folder.name
+    label = f"Assembly: {name}"
+
+    components: list[dict[str, Any]] = []
+    parts_with_models: set[str] = set()
+    for path in folder.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+        record = asset_service.ensure_asset(str(path), label=path.name)
+        try:
+            parent_dir = str(Path(record.path).parent)
+        except Exception:  # noqa: BLE001
+            parent_dir = str(folder)
+        parts_with_models.add(parent_dir)
+        try:
+            parent = Path(record.path).parent
+            comp_label = parent.name if parent != folder else Path(record.path).stem
+        except Exception:  # noqa: BLE001
+            comp_label = record.label
+        comp_metadata = build_component_metadata(record, assembly_root=folder)
+        components.append(
+            {
+                "path": record.path,
+                "label": comp_label,
+                "kind": "component",
+                "asset_id": record.id,
+                "metadata": comp_metadata,
+            }
+        )
+
+    try:
+        for sub in sorted([p for p in folder.iterdir() if p.is_dir()]):
+            if sub.name.startswith("."):
+                continue
+            if str(sub) in parts_with_models:
+                continue
+            components.append(
+                {
+                    "path": str(sub),
+                    "label": sub.name,
+                    "kind": "placeholder",
+                    "metadata": build_placeholder_metadata(sub, assembly_root=folder),
+                }
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+    preserved_attachments: list[dict[str, Any]] = []
+    preserved_arrangements: list[dict[str, Any]] = []
+    existing_metadata = (
+        dict(existing.metadata)
+        if existing is not None and isinstance(existing.metadata, dict)
+        else {}
+    )
+    raw_attachments = existing_metadata.get("attachments") or []
+    for entry in raw_attachments:
+        if not isinstance(entry, dict):
+            continue
+        enriched = dict(entry)
+        raw_path = str(enriched.get("path") or "").strip()
+        existing_meta = (
+            enriched.get("metadata")
+            if isinstance(enriched.get("metadata"), dict)
+            else None
+        )
+        if raw_path:
+            enriched["metadata"] = build_attachment_metadata(
+                raw_path,
+                assembly_root=folder,
+                existing_metadata=existing_meta,
+            )
+        preserved_attachments.append(enriched)
+
+    raw_arrangements = existing_metadata.get("arrangements") or []
+    for entry in raw_arrangements:
+        if isinstance(entry, dict):
+            preserved_arrangements.append(dict(entry))
+
+    try:
+        arrangements = discover_arrangement_scripts(folder, preserved_arrangements)
+    except Exception:  # noqa: BLE001
+        arrangements = [dict(entry) for entry in preserved_arrangements]
+
+    metadata = dict(existing_metadata)
+    metadata.update(
+        {
+            "kind": "assembly",
+            "components": components,
+            "project": name,
+        }
+    )
+    if preserved_attachments:
+        metadata["attachments"] = preserved_attachments
+    else:
+        metadata.pop("attachments", None)
+    if arrangements:
+        metadata["arrangements"] = arrangements
+    else:
+        metadata.pop("arrangements", None)
+
+    if existing is None:
+        asset = asset_service.create_asset(
+            str(folder),
+            label=label,
+            metadata=metadata,
+        )
+    else:
+        asset = asset_service.update_asset(
+            existing.id,
+            metadata=metadata,
+            label=label,
+        )
+
+    return AssemblyScanOutcome(
+        folder=folder,
+        asset=asset,
+        component_count=len(components),
+    )
 
 
 class MainWindow(QMainWindow):
@@ -99,6 +295,10 @@ class MainWindow(QMainWindow):
         self._fs_debounce.setInterval(400)
         self._fs_debounce.timeout.connect(self._refresh_current_assembly)
         self._watched_dirs: set[str] = set()
+        self._thread_pool = QThreadPool.globalInstance()
+        self._assembly_workers: dict[str, AssemblyScanWorker] = {}
+        self._assembly_pending: dict[str, int] = {}
+        self._assembly_refresh_requests: dict[str, AssemblyRefreshRequest] = {}
 
         self._build_layout()
         self._connect_signals()
@@ -341,7 +541,11 @@ class MainWindow(QMainWindow):
             )
             if not folder:
                 return
-            self._create_or_update_assembly(Path(folder))
+            self._create_or_update_assembly(
+                Path(folder),
+                select_in_repo=True,
+                show_assembly=True,
+            )
             # Select in repository list
             for row in range(self._repository_list.count()):
                 item = self._repository_list.item(row)
@@ -542,7 +746,12 @@ class MainWindow(QMainWindow):
                 return
 
             # Load/show assembly for parent and select this file inside
-            self._create_or_update_assembly(parent)
+            self._create_or_update_assembly(
+                parent,
+                select_in_repo=True,
+                focus_component=str(target),
+                show_assembly=True,
+            )
             for row in range(self._repository_list.count()):
                 it = self._repository_list.item(row)
                 if str(it.data(Qt.UserRole) or it.text()) == str(parent):
@@ -798,7 +1007,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Assembly helpers
     # ------------------------------------------------------------------
-    def _create_or_update_assembly(self, folder: Path) -> None:
+    def _create_or_update_assembly(
+        self,
+        folder: Path,
+        *,
+        select_in_repo: bool = False,
+        focus_component: str | None = None,
+        show_assembly: bool = False,
+    ) -> None:
         folder = folder.expanduser().resolve()
         config = get_config()
         root = config.library_root
@@ -808,149 +1024,107 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Folder must be under the library root", 4000)
             return
 
-        name = folder.name
-        label = f"Assembly: {name}"
+        key = str(folder)
+        request = self._assembly_refresh_requests.get(key)
+        if request is None:
+            request = AssemblyRefreshRequest()
+            self._assembly_refresh_requests[key] = request
+        if select_in_repo:
+            request.select_in_repo = True
+        if show_assembly or focus_component is not None:
+            request.show_assembly = True
+        if focus_component is not None:
+            request.focus_component = focus_component
 
-        # Discover components within folder
-        from .importer import SUPPORTED_EXTENSIONS
+        if key in self._assembly_workers:
+            self._assembly_pending[key] = self._assembly_pending.get(key, 0) + 1
+            return
 
-        components: list[dict[str, Any]] = []
-        parts_with_models: set[str] = set()
-        for path in folder.rglob("*"):
-            if not path.is_file():
-                continue
-            if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                continue
-            record = self._asset_service.ensure_asset(str(path), label=path.name)
-            try:
-                parent_dir = str(Path(record.path).parent)
-            except Exception:
-                parent_dir = str(folder)
-            parts_with_models.add(parent_dir)
-            # Label by parent folder when nested, else by file stem
-            try:
-                parent = Path(record.path).parent
-                comp_label = parent.name if parent != folder else Path(record.path).stem
-            except Exception:
-                comp_label = record.label
-            comp_metadata = build_component_metadata(record, assembly_root=folder)
-            components.append(
-                {
-                    "path": record.path,
-                    "label": comp_label,
-                    "kind": "component",
-                    "asset_id": record.id,
-                    "metadata": comp_metadata,
-                }
-            )
-
-        # Include placeholder items for immediate subfolders without a model yet
-        try:
-            for sub in sorted([p for p in folder.iterdir() if p.is_dir()]):
-                if sub.name.startswith("."):
-                    continue
-                if str(sub) in parts_with_models:
-                    continue
-                components.append(
-                    {
-                        "path": str(sub),
-                        "label": sub.name,
-                        "kind": "placeholder",
-                        "metadata": build_placeholder_metadata(
-                            sub, assembly_root=folder
-                        ),
-                    }
-                )
-        except Exception:
-            pass
-
-        # Create or update an asset record representing the assembly (path = folder)
         existing = self._asset_service.get_asset_by_path(str(folder))
-        preserved_attachments: list[dict] = []
-        preserved_arrangements: list[dict] = []
-        if existing is not None:
-            try:
-                preserved_attachments = list(
-                    (existing.metadata or {}).get("attachments") or []
-                )
-            except Exception:
-                preserved_attachments = []
-            try:
-                preserved_arrangements = list(
-                    (existing.metadata or {}).get("arrangements") or []
-                )
-            except Exception:
-                preserved_arrangements = []
-        normalized_attachments: list[dict[str, Any]] = []
-        for entry in preserved_attachments:
-            if not isinstance(entry, dict):
-                continue
-            enriched = dict(entry)
-            raw_path = str(enriched.get("path") or "").strip()
-            existing_meta = (
-                enriched.get("metadata")
-                if isinstance(enriched.get("metadata"), dict)
-                else None
-            )
-            if raw_path:
-                enriched["metadata"] = build_attachment_metadata(
-                    raw_path,
-                    assembly_root=folder,
-                    existing_metadata=existing_meta,
-                )
-            normalized_attachments.append(enriched)
-        preserved_attachments = normalized_attachments
-
-        try:
-            arrangements = discover_arrangement_scripts(folder, preserved_arrangements)
-        except Exception:
-            arrangements = [dict(entry) for entry in preserved_arrangements]
-        base_metadata: dict[str, Any]
-        if existing is not None and isinstance(existing.metadata, dict):
-            base_metadata = dict(existing.metadata)
-        else:
-            base_metadata = {}
-
-        metadata = dict(base_metadata)
-        metadata.update(
-            {
-                "kind": "assembly",
-                "components": components,
-                "project": name,
-            }
+        worker = AssemblyScanWorker(folder, self._asset_service, existing)
+        worker.signals.finished.connect(self._handle_assembly_scan_finished)
+        worker.signals.error.connect(self._handle_assembly_scan_error)
+        self._assembly_workers[key] = worker
+        self.statusBar().showMessage(
+            f"Updating assembly '{folder.name}'…",
+            1500,
         )
-        if preserved_attachments:
-            metadata["attachments"] = preserved_attachments
-        else:
-            metadata.pop("attachments", None)
-        if arrangements:
-            metadata["arrangements"] = arrangements
-        else:
-            metadata.pop("arrangements", None)
-        if existing is None:
-            self._asset_service.create_asset(
-                str(folder),
-                label=label,
-                metadata=metadata,
-            )
-        else:
-            # Merge components while preserving attachments
-            self._asset_service.update_asset(
-                existing.id,
-                metadata=metadata,
-                label=label,
-            )
+        self._thread_pool.start(worker)
+
+    def _handle_assembly_scan_finished(self, payload: object) -> None:
+        outcome = payload if isinstance(payload, AssemblyScanOutcome) else None
+        if outcome is None:
+            return
+
+        key = str(outcome.folder)
+        self._assembly_workers.pop(key, None)
+        pending = self._assembly_pending.pop(key, 0)
+        request = self._assembly_refresh_requests.pop(key, None)
 
         self._populate_repository()
+        name = outcome.folder.name
         self.statusBar().showMessage(
-            f"Assembly '{name}' updated with {len(components)} component(s)",
+            f"Assembly '{name}' updated with {outcome.component_count} component(s)",
             4000,
         )
-        # Update watcher to monitor latest folder
+
+        if request is not None and request.select_in_repo:
+            self._select_repository_path(key)
+
+        should_show = False
+        focus_component = None
+        if request is not None:
+            should_show = request.show_assembly
+            focus_component = request.focus_component
+
+        current_path = None
+        if self._current_asset is not None:
+            try:
+                current_path = Path(self._current_asset.path).expanduser().resolve()
+            except Exception:  # noqa: BLE001
+                current_path = None
+        if current_path == outcome.folder:
+            should_show = True
+
+        if should_show:
+            self._show_assembly(outcome.asset)
+            self._current_asset = outcome.asset
+            if focus_component:
+                try:
+                    self._assembly_pane.select_item(focus_component)
+                except Exception:  # noqa: BLE001
+                    pass
+        else:
+            if self._current_asset is not None and str(self._current_asset.path) == key:
+                self._current_asset = outcome.asset
+
         try:
-            self._watch_assembly_folder(folder)
-        except Exception:
+            self._watch_assembly_folder(outcome.folder)
+        except Exception:  # noqa: BLE001
             pass
+
+        if pending > 0:
+            remaining = pending - 1
+            if remaining > 0:
+                self._assembly_pending[key] = remaining
+            self._create_or_update_assembly(outcome.folder)
+
+    def _handle_assembly_scan_error(self, folder_path: str, message: str) -> None:
+        self._assembly_workers.pop(folder_path, None)
+        pending = self._assembly_pending.pop(folder_path, 0)
+        self._assembly_refresh_requests.pop(folder_path, None)
+
+        folder_name = Path(folder_path).name
+        self.statusBar().showMessage(
+            f"Failed to update assembly '{folder_name}': {message}",
+            5000,
+        )
+
+        if pending > 0:
+            try:
+                self._create_or_update_assembly(Path(folder_path))
+            except Exception:  # noqa: BLE001
+                logger.exception("Retrying assembly refresh failed for %s", folder_path)
 
     def _add_assembly_attachments(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -1079,7 +1253,7 @@ class MainWindow(QMainWindow):
                     meta["managed_path"] = str(dest)
                 self._asset_service.update_asset(rec.id, path=str(dest), metadata=meta)
             moved += 1
-        self._create_or_update_assembly(folder)
+        self._create_or_update_assembly(folder, show_assembly=True)
         self.statusBar().showMessage(f"Organized parts: {moved} moved", 4000)
 
     def _open_current_assembly_folder(self) -> None:
@@ -1116,10 +1290,7 @@ class MainWindow(QMainWindow):
         if kind != "assembly":
             return
         folder = Path(asset.path)
-        self._create_or_update_assembly(folder)
-        latest = self._asset_service.get_asset_by_path(str(folder))
-        if latest is not None:
-            self._show_assembly(latest)
+        self._create_or_update_assembly(folder, show_assembly=True)
 
     def _watch_assembly_folder(self, folder: Path) -> None:
         # Reset watchers to only current assembly folder
@@ -1162,7 +1333,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Reached outside the library root.", 3000)
             return
         # Create/update assembly for the parent folder and show it
-        self._create_or_update_assembly(parent)
+        self._create_or_update_assembly(
+            parent,
+            select_in_repo=True,
+            show_assembly=True,
+        )
         # Select the newly created/updated parent assembly in the repo list
         target = str(parent)
         for row in range(self._repository_list.count()):
@@ -1224,7 +1399,11 @@ class MainWindow(QMainWindow):
                         3000,
                     )
                     return
-                self._create_or_update_assembly(folder)
+                self._create_or_update_assembly(
+                    folder,
+                    select_in_repo=True,
+                    show_assembly=True,
+                )
                 # Select assembly
                 for row in range(self._repository_list.count()):
                     candidate = self._repository_list.item(row)
@@ -1250,7 +1429,11 @@ class MainWindow(QMainWindow):
             folder.relative_to(get_config().library_root)
         except Exception:
             return
-        self._create_or_update_assembly(folder)
+        self._create_or_update_assembly(
+            folder,
+            select_in_repo=True,
+            show_assembly=True,
+        )
         for row in range(self._repository_list.count()):
             item = self._repository_list.item(row)
             item_path = str(item.data(Qt.UserRole) or item.text())
@@ -1389,7 +1572,11 @@ class MainWindow(QMainWindow):
                 f"Unable to create part folder: {part_dir}",
             )
             return
-        self._create_or_update_assembly(folder)
+        self._create_or_update_assembly(
+            folder,
+            show_assembly=True,
+            focus_component=str(part_dir),
+        )
         parent_asset = self._asset_service.get_asset_by_path(str(folder))
         if parent_asset is not None:
             self._show_assembly(parent_asset)
