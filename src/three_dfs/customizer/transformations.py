@@ -222,7 +222,10 @@ def _create_text_shape(
     if not faces:
         raise TransformationError("Text outline did not contain any faces")
 
-    extrusions = [face.extrude(Vector(0.0, 0.0, depth)) for face in faces]
+    extrusion_direction = Vector(0.0, 0.0, 1.0)
+    extrusions = [
+        face.extrude(amount=depth, direction=extrusion_direction) for face in faces
+    ]
     solid = extrusions[0] if len(extrusions) == 1 else Compound(extrusions)
     solid = _apply_matrix(solid, _translation_matrix((0.0, 0.0, -depth / 2.0)))
     if spacing != 1.0:
