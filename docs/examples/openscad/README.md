@@ -38,11 +38,11 @@ A demonstration part that highlights a variety of customizer controls:
   position shared across both bracket legs.
 
 The generated bracket occupies the positive X/Y quadrant with the inside corner
-at the origin, making it easy to position in downstream assemblies.
+at the origin, making it easy to position in downstream projects.
 
 ## `make_runners.scad`
 
-Generates runner plates that bundle the parts of an assembly into old-school
+Generates runner plates that bundle the parts of a project into old-school
 sprued frames:
 
 - Choose from common FDM build plate presets (Prusa MK3, Bambu X1, Voron 300,

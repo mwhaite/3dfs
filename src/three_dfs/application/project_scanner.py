@@ -1,4 +1,4 @@
-"""Background assembly scanning helpers used by the Qt application."""
+"""Background project scanning helpers used by the Qt application."""
 
 from __future__ import annotations
 
@@ -9,53 +9,53 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-from ..assembly import (
+from ..importer import SUPPORTED_EXTENSIONS
+from ..project import (
     build_attachment_metadata,
     build_component_metadata,
     build_placeholder_metadata,
     discover_arrangement_scripts,
 )
-from ..importer import SUPPORTED_EXTENSIONS
 from ..storage import AssetRecord, AssetService
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "AssemblyRefreshRequest",
-    "AssemblyScanOutcome",
-    "AssemblyScanWorker",
-    "AssemblyScanWorkerSignals",
-    "scan_assembly_folder",
+    "ProjectRefreshRequest",
+    "ProjectScanOutcome",
+    "ProjectScanWorker",
+    "ProjectScanWorkerSignals",
+    "scan_project_folder",
 ]
 
 
 @dataclass(slots=True)
-class AssemblyRefreshRequest:
-    """Describe follow-up actions after refreshing an assembly."""
+class ProjectRefreshRequest:
+    """Describe follow-up actions after refreshing a project."""
 
     select_in_repo: bool = False
-    show_assembly: bool = False
+    show_project: bool = False
     focus_component: str | None = None
 
 
 @dataclass(slots=True)
-class AssemblyScanOutcome:
-    """Result produced by :class:`AssemblyScanWorker`."""
+class ProjectScanOutcome:
+    """Result produced by :class:`ProjectScanWorker`."""
 
     folder: Path
     asset: AssetRecord
     component_count: int
 
 
-class AssemblyScanWorkerSignals(QObject):
-    """Signals emitted by :class:`AssemblyScanWorker`."""
+class ProjectScanWorkerSignals(QObject):
+    """Signals emitted by :class:`ProjectScanWorker`."""
 
     finished = Signal(object)
     error = Signal(str, str)
 
 
-class AssemblyScanWorker(QRunnable):
-    """Background task that scans an assembly folder and updates metadata."""
+class ProjectScanWorker(QRunnable):
+    """Background task that scans a project folder and updates metadata."""
 
     def __init__(
         self,
@@ -67,31 +67,31 @@ class AssemblyScanWorker(QRunnable):
         self._folder = folder
         self._asset_service = asset_service
         self._existing = existing
-        self.signals = AssemblyScanWorkerSignals()
+        self.signals = ProjectScanWorkerSignals()
 
     def run(self) -> None:  # pragma: no cover - exercised indirectly
         try:
-            outcome = scan_assembly_folder(
+            outcome = scan_project_folder(
                 self._folder, self._asset_service, self._existing
             )
         except Exception as exc:  # noqa: BLE001 - safety net mirrors previous behaviour
-            logger.exception("Failed to refresh assembly at %s", self._folder)
+            logger.exception("Failed to refresh project at %s", self._folder)
             message = str(exc) or exc.__class__.__name__
             self.signals.error.emit(str(self._folder), message)
         else:
             self.signals.finished.emit(outcome)
 
 
-def scan_assembly_folder(
+def scan_project_folder(
     folder: Path,
     asset_service: AssetService,
     existing: AssetRecord | None,
-) -> AssemblyScanOutcome:
+) -> ProjectScanOutcome:
     """Return refreshed metadata for *folder* and persist it."""
 
     folder = folder.expanduser().resolve()
     name = folder.name
-    label = f"Assembly: {name}"
+    label = f"Project: {name}"
 
     components: list[dict[str, Any]] = []
     parts_with_models: set[str] = set()
@@ -113,7 +113,7 @@ def scan_assembly_folder(
             comp_label = parent.name if parent != folder else Path(record.path).stem
         except Exception:  # noqa: BLE001 - keep behaviour consistent with legacy logic
             comp_label = record.label
-        comp_metadata = build_component_metadata(record, assembly_root=folder)
+        comp_metadata = build_component_metadata(record, project_root=folder)
         components.append(
             {
                 "path": record.path,
@@ -135,7 +135,7 @@ def scan_assembly_folder(
                     "path": str(sub),
                     "label": sub.name,
                     "kind": "placeholder",
-                    "metadata": build_placeholder_metadata(sub, assembly_root=folder),
+                    "metadata": build_placeholder_metadata(sub, project_root=folder),
                 }
             )
     except Exception:  # noqa: BLE001 - filesystem access is inherently fallible
@@ -162,7 +162,7 @@ def scan_assembly_folder(
         if raw_path:
             enriched["metadata"] = build_attachment_metadata(
                 raw_path,
-                assembly_root=folder,
+                project_root=folder,
                 existing_metadata=existing_meta,
             )
         preserved_attachments.append(enriched)
@@ -180,7 +180,7 @@ def scan_assembly_folder(
     metadata = dict(existing_metadata)
     metadata.update(
         {
-            "kind": "assembly",
+            "kind": "project",
             "components": components,
             "project": name,
         }
@@ -207,7 +207,7 @@ def scan_assembly_folder(
             label=label,
         )
 
-    return AssemblyScanOutcome(
+    return ProjectScanOutcome(
         folder=folder,
         asset=asset,
         component_count=len(components),

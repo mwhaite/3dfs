@@ -1,4 +1,4 @@
-"""Assembly page: displays an assembly and its component parts."""
+"""Project page: displays a project and its component parts."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ _ASSET_ID_ROLE = Qt.UserRole + 3
 
 
 @dataclass(slots=True)
-class AssemblyComponent:
+class ProjectComponent:
     path: str
     label: str
     kind: str = "component"  # "component" or "attachment"
@@ -61,7 +61,7 @@ class AssemblyComponent:
 
 
 @dataclass(slots=True)
-class AssemblyArrangement:
+class ProjectArrangement:
     path: str
     label: str
     description: str | None = None
@@ -69,8 +69,8 @@ class AssemblyArrangement:
     metadata: dict[str, Any] | None = None
 
 
-class AssemblyPane(QWidget):
-    """Show assembly metadata and component list with live preview."""
+class ProjectPane(QWidget):
+    """Show project metadata and component list with live preview."""
 
     addAttachmentsRequested = Signal()
     filesDropped = Signal(list)
@@ -84,26 +84,26 @@ class AssemblyPane(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self._title = QLabel("Assembly", self)
-        self._title.setObjectName("assemblyTitle")
+        self._title = QLabel("Project", self)
+        self._title.setObjectName("projectTitle")
         self._title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         self._path_label = QLabel("", self)
-        self._path_label.setObjectName("assemblyPath")
+        self._path_label.setObjectName("projectPath")
         self._path_label.setWordWrap(True)
         self._breadcrumb = QLabel("", self)
-        self._breadcrumb.setObjectName("assemblyBreadcrumb")
+        self._breadcrumb.setObjectName("projectBreadcrumb")
         self._breadcrumb.setTextFormat(Qt.RichText)
         self._breadcrumb.setOpenExternalLinks(False)
         self._breadcrumb.linkActivated.connect(self._handle_breadcrumb_link)
 
         self._readme = QTextEdit(self)
-        self._readme.setObjectName("assemblyReadme")
+        self._readme.setObjectName("projectReadme")
         self._readme.setReadOnly(True)
         self._readme.setVisible(False)
 
         self._components = QListWidget(self)
-        self._components.setObjectName("assemblyComponents")
+        self._components.setObjectName("projectComponents")
         self._components.setSelectionMode(QAbstractItemView.SingleSelection)
         self._components.currentItemChanged.connect(self._handle_component_selected)
         self._icon_size = QSize(48, 48)
@@ -127,10 +127,10 @@ class AssemblyPane(QWidget):
         actions_row.setContentsMargins(0, 0, 0, 0)
         actions_row.setSpacing(8)
         self._btn_up = QPushButton("Up", self)
-        self._btn_up.setToolTip("Go to parent assembly folder")
+        self._btn_up.setToolTip("Go to parent project folder")
         self._btn_up.clicked.connect(self.navigateUpRequested)
         self._btn_refresh = QPushButton("Refresh", self)
-        self._btn_refresh.setToolTip("Rescan this assembly folder")
+        self._btn_refresh.setToolTip("Rescan this project folder")
         self._btn_refresh.clicked.connect(self.refreshRequested)
         self._btn_add_attachments = QPushButton("Add Attachment(s)", self)
         self._btn_add_attachments.clicked.connect(self.addAttachmentsRequested)
@@ -156,21 +156,21 @@ class AssemblyPane(QWidget):
         layout.addWidget(self._readme)
         layout.addWidget(splitter, 1)
 
-        self._assembly_path: str | None = None
+        self._project_path: str | None = None
         self._thread_pool = QThreadPool.globalInstance()
         # Shortcut to focus search
         QShortcut(QKeySequence("Ctrl+F"), self, activated=self._focus_search)
 
-    def set_assembly(
+    def set_project(
         self,
         path: str,
         *,
         label: str,
-        components: Iterable[AssemblyComponent],
-        arrangements: Iterable[AssemblyArrangement] = (),
-        attachments: Iterable[AssemblyComponent] = (),
+        components: Iterable[ProjectComponent],
+        arrangements: Iterable[ProjectArrangement] = (),
+        attachments: Iterable[ProjectComponent] = (),
     ) -> None:
-        self._assembly_path = path
+        self._project_path = path
         self._title.setText(label)
         self._path_label.setText(path)
         self._update_breadcrumb(Path(path))
@@ -241,7 +241,7 @@ class AssemblyPane(QWidget):
         # Queue thumbnail icon generation for parts
         if comp_paths or attach_paths or arrangement_paths:
             self._enqueue_icons(comp_paths, attach_paths + arrangement_paths)
-        # Load README for the assembly folder
+        # Load README for the project folder
         self._load_readme(Path(path))
 
         if self._components.count():
@@ -389,8 +389,8 @@ class AssemblyPane(QWidget):
         add_act = menu.addAction("Add Attachment(s) Here…")
         open_item_act = menu.addAction("Open Item")
         open_item_act.setEnabled(self._can_open_with_handler(item))
-        open_assembly_act = menu.addAction("Open Assembly")
-        open_assembly_act.setEnabled(navigate_target is not None)
+        open_project_act = menu.addAction("Open Project")
+        open_project_act.setEnabled(navigate_target is not None)
         upstream_links = self._extract_upstream_links(item)
         open_source_act = None
         if upstream_links:
@@ -414,7 +414,7 @@ class AssemblyPane(QWidget):
             self.addAttachmentsRequested.emit()
         elif action == open_item_act:
             self._open_component_with_handler(item)
-        elif action == open_assembly_act:
+        elif action == open_project_act:
             if navigate_target is not None:
                 self.navigateToPathRequested.emit(navigate_target)
         elif action == open_act:
@@ -457,9 +457,9 @@ class AssemblyPane(QWidget):
         except Exception:
             return None
         base: Path | None = None
-        if self._assembly_path:
+        if self._project_path:
             try:
-                base = Path(self._assembly_path)
+                base = Path(self._project_path)
             except Exception:
                 base = None
         try:
@@ -601,11 +601,11 @@ class AssemblyPane(QWidget):
         if kind in {"attachment", "arrangement"}:
             return None
         is_placeholder = kind == "placeholder"
-        is_assembly_kind = kind == "assembly"
+        is_project_kind = kind == "project"
         base_path: Path | None = None
-        if self._assembly_path:
+        if self._project_path:
             try:
-                base_path = Path(self._assembly_path)
+                base_path = Path(self._project_path)
             except Exception:
                 base_path = None
         try:
@@ -624,7 +624,7 @@ class AssemblyPane(QWidget):
             return str(resolved)
 
         if candidate_path is None:
-            if not (is_placeholder or is_assembly_kind):
+            if not (is_placeholder or is_project_kind):
                 return None
             try:
                 fallback = Path(path_str)
@@ -640,7 +640,7 @@ class AssemblyPane(QWidget):
         except Exception:
             pass
 
-        if is_placeholder or is_assembly_kind:
+        if is_placeholder or is_project_kind:
             return _resolve_path(candidate_path)
         return None
 

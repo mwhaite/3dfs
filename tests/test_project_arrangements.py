@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from three_dfs.assembly import (
+from three_dfs.project import (
     build_attachment_metadata,
     build_component_metadata,
     discover_arrangement_scripts,
@@ -16,8 +16,8 @@ def _resolve(path: Path) -> str:
 
 
 def test_discover_arrangement_scripts_detects_layouts(tmp_path):
-    assembly_dir = tmp_path / "airframe"
-    arrangement_dir = assembly_dir / "arrangements"
+    project_dir = tmp_path / "airframe"
+    arrangement_dir = project_dir / "arrangements"
     arrangement_dir.mkdir(parents=True)
 
     exploded = arrangement_dir / "exploded_view.scad"
@@ -25,7 +25,7 @@ def test_discover_arrangement_scripts_detects_layouts(tmp_path):
     exploded.write_text("// exploded view")
     packed.write_text("// packed view")
 
-    arrangements = discover_arrangement_scripts(assembly_dir)
+    arrangements = discover_arrangement_scripts(project_dir)
     assert len(arrangements) == 2
 
     paths = {entry["path"] for entry in arrangements}
@@ -47,18 +47,18 @@ def test_discover_arrangement_scripts_detects_layouts(tmp_path):
         metadata = entry.get("metadata")
         assert isinstance(metadata, dict)
         assert metadata.get("handler") == "openscad"
-        assert metadata.get("assembly_path") == str(assembly_dir.resolve())
+        assert metadata.get("project_path") == str(project_dir.resolve())
 
 
 def test_discover_arrangement_scripts_preserves_existing_metadata(tmp_path):
-    assembly_dir = tmp_path / "assembly"
-    arrangement_dir = assembly_dir / "arrangements"
+    project_dir = tmp_path / "project"
+    arrangement_dir = project_dir / "arrangements"
     arrangement_dir.mkdir(parents=True)
 
     exploded = arrangement_dir / "exploded_view.scad"
     exploded.write_text("// exploded")
 
-    custom = assembly_dir / "custom_layout.scad"
+    custom = project_dir / "custom_layout.scad"
     custom.write_text("// custom layout")
 
     existing = [
@@ -72,11 +72,11 @@ def test_discover_arrangement_scripts_preserves_existing_metadata(tmp_path):
             "label": "Custom Layout",
             "metadata": {"variant": "A"},
         },
-        {"path": str(assembly_dir / "missing.scad"), "label": "Missing"},
+        {"path": str(project_dir / "missing.scad"), "label": "Missing"},
         {"path": "arrangements/legacy.scad", "label": "Legacy"},
     ]
 
-    arrangements = discover_arrangement_scripts(assembly_dir, existing)
+    arrangements = discover_arrangement_scripts(project_dir, existing)
     by_path = {entry["path"]: entry for entry in arrangements}
 
     exploded_key = _resolve(exploded)
@@ -112,12 +112,12 @@ def _make_asset_record(base_path: Path) -> AssetRecord:
 
 
 def test_build_component_metadata_includes_author_and_links(tmp_path):
-    assembly_root = tmp_path / "assembly"
-    assembly_root.mkdir()
+    project_root = tmp_path / "project"
+    project_root.mkdir()
     record = _make_asset_record(tmp_path)
-    metadata = build_component_metadata(record, assembly_root=assembly_root)
+    metadata = build_component_metadata(record, project_root=project_root)
     assert metadata["asset_id"] == record.id
-    assert metadata["assembly_path"] == str(assembly_root)
+    assert metadata["project_path"] == str(project_root)
     assert metadata["author"] == "Ada"
     links = metadata.get("upstream_links")
     assert isinstance(links, list)
@@ -128,34 +128,34 @@ def test_build_component_metadata_includes_author_and_links(tmp_path):
 
 
 def test_build_attachment_metadata_sets_relationships(tmp_path):
-    assembly_root = tmp_path / "assembly"
-    assembly_root.mkdir()
-    attachment = assembly_root / "notes.txt"
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    attachment = project_root / "notes.txt"
     attachment.write_text("hello")
 
     metadata = build_attachment_metadata(
         attachment,
-        assembly_root=assembly_root,
+        project_root=project_root,
         source_path=attachment,
     )
 
-    assert metadata["assembly_path"] == str(assembly_root)
+    assert metadata["project_path"] == str(project_root)
     assert metadata["asset_path"] == str(attachment)
     assert metadata.get("handler") == "system"
     related = metadata.get("related_items")
     assert isinstance(related, list) and related
-    assert related[0].get("path") == str(assembly_root)
+    assert related[0].get("path") == str(project_root)
 
 
 def test_build_attachment_metadata_merges_links_and_author(tmp_path):
-    assembly_root = tmp_path / "assembly"
-    assembly_root.mkdir()
-    attachment = assembly_root / "notes.txt"
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    attachment = project_root / "notes.txt"
     attachment.write_text("hello")
 
     metadata = build_attachment_metadata(
         attachment,
-        assembly_root=assembly_root,
+        project_root=project_root,
         existing_metadata={
             "creator": "Grace Hopper",
             "source_url": "https://example.com/notes.txt",

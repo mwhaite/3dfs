@@ -1,4 +1,4 @@
-"""Helpers for working with assembly metadata."""
+"""Helpers for working with project metadata."""
 
 from __future__ import annotations
 
@@ -35,9 +35,9 @@ _UPSTREAM_KEYS: tuple[tuple[str, str], ...] = (
 def build_component_metadata(
     record: AssetRecord,
     *,
-    assembly_root: Path,
+    project_root: Path,
 ) -> dict[str, Any]:
-    """Return enriched metadata for an assembly component."""
+    """Return enriched metadata for a project component."""
 
     base_metadata = getattr(record, "metadata", {}) or {}
     metadata = dict(base_metadata)
@@ -60,8 +60,8 @@ def build_component_metadata(
     if upstream_links:
         metadata["upstream_links"] = upstream_links
 
-    metadata["assembly_path"] = _stringify(assembly_root)
-    related_items = _merge_related_items(metadata.get("related_items"), assembly_root)
+    metadata["project_path"] = _stringify(project_root)
+    related_items = _merge_related_items(metadata.get("related_items"), project_root)
     if related_items:
         metadata["related_items"] = related_items
 
@@ -81,16 +81,16 @@ def build_component_metadata(
 def build_attachment_metadata(
     attachment_path: Path | str,
     *,
-    assembly_root: Path,
+    project_root: Path,
     source_path: Path | str | None = None,
     existing_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return metadata for an attachment stored within an assembly."""
+    """Return metadata for an attachment stored within a project."""
 
     metadata = dict(existing_metadata or {})
     attachment_str = _stringify(attachment_path)
     metadata.setdefault("asset_path", attachment_str)
-    metadata["assembly_path"] = _stringify(assembly_root)
+    metadata["project_path"] = _stringify(project_root)
     if source_path is not None:
         metadata.setdefault("original_path", _stringify(source_path))
 
@@ -102,7 +102,7 @@ def build_attachment_metadata(
     if upstream_links:
         metadata["upstream_links"] = upstream_links
 
-    related_items = _merge_related_items(metadata.get("related_items"), assembly_root)
+    related_items = _merge_related_items(metadata.get("related_items"), project_root)
     if related_items:
         metadata["related_items"] = related_items
 
@@ -119,29 +119,27 @@ def build_attachment_metadata(
     return metadata
 
 
-def build_arrangement_metadata(
-    script_path: Path, assembly_root: Path
-) -> dict[str, Any]:
+def build_arrangement_metadata(script_path: Path, project_root: Path) -> dict[str, Any]:
     """Return metadata describing an arrangement script."""
 
     metadata = {
         "asset_path": _stringify(script_path),
-        "assembly_path": _stringify(assembly_root),
+        "project_path": _stringify(project_root),
         "mime_type": "application/x-openscad",
         "handler": "openscad",
     }
-    metadata["related_items"] = _merge_related_items(None, assembly_root)
+    metadata["related_items"] = _merge_related_items(None, project_root)
     return metadata
 
 
-def build_placeholder_metadata(path: Path, *, assembly_root: Path) -> dict[str, Any]:
+def build_placeholder_metadata(path: Path, *, project_root: Path) -> dict[str, Any]:
     """Return metadata for a placeholder component directory."""
 
     metadata = {
         "asset_path": _stringify(path),
-        "assembly_path": _stringify(assembly_root),
+        "project_path": _stringify(project_root),
     }
-    metadata["related_items"] = _merge_related_items(None, assembly_root)
+    metadata["related_items"] = _merge_related_items(None, project_root)
     return metadata
 
 
@@ -160,7 +158,7 @@ def discover_arrangement_scripts(
     Parameters
     ----------
     folder:
-        Assembly root directory that may contain arrangement scripts.
+        Project root directory that may contain arrangement scripts.
     existing:
         Optional iterable of mappings describing previously stored arrangement
         metadata.  Any recognised entries are merged with the newly discovered
@@ -435,18 +433,18 @@ def _looks_like_url(text: str) -> bool:
 
 def _merge_related_items(
     existing: object,
-    assembly_root: Path,
+    project_root: Path,
 ) -> list[dict[str, str]]:
     entries = _normalize_related_entries(existing)
-    assembly_path = _stringify(assembly_root)
-    assembly_label = assembly_root.name or assembly_path
-    assembly_entry = {
-        "path": assembly_path,
-        "label": assembly_label,
-        "relationship": "assembly",
+    project_path = _stringify(project_root)
+    project_label = project_root.name or project_path
+    project_entry = {
+        "path": project_path,
+        "label": project_label,
+        "relationship": "project",
     }
-    if not any(item.get("path") == assembly_entry["path"] for item in entries):
-        entries.append(assembly_entry)
+    if not any(item.get("path") == project_entry["path"] for item in entries):
+        entries.append(project_entry)
     return entries
 
 

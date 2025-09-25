@@ -12,7 +12,7 @@ project.  The schema models the core asset management concepts:
 * :class:`PrinterProfile` – reusable printer settings that can be referenced
   by versions.
 * :class:`AssetRelationship` – directed links between assets used to model
-  assemblies, related structures, and other metadata-rich associations.
+  projects, related structures, and other metadata-rich associations.
 * :class:`AuditLog` – append-only records describing actions performed on an
   asset.
 
