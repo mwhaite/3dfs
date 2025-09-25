@@ -1,7 +1,8 @@
 """Interactive 3D model viewer using QOpenGLWidget.
 
-Minimal real-time viewport to orbit/pan/zoom STL/OBJ meshes or STEP bounds.
-Relies on trimesh for mesh loading and PySide6 OpenGL wrappers.
+Minimal real-time viewport to orbit/pan/zoom common mesh formats such as
+STL/OBJ/PLY/GLTF/GLB (via :mod:`trimesh`), STEP bounding boxes, and optionally
+FBX files when the Autodesk FBX Python SDK is available.
 """
 
 from __future__ import annotations
@@ -27,6 +28,11 @@ try:  # pragma: no cover - exercised at runtime
     import trimesh  # type: ignore
 except Exception:  # pragma: no cover - fallback if unavailable
     trimesh = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    import fbx  # type: ignore
+except Exception:  # pragma: no cover - gracefully ignore when absent
+    fbx = None  # type: ignore
 
 
 VERT_SHADER = """
@@ -339,19 +345,15 @@ class ModelViewer(QOpenGLWidget):
         vertices: np.ndarray | None = None
         faces: np.ndarray | None = None
 
-        if suffix in {".stl", ".obj"} and trimesh is not None:
-            try:
-                mesh = trimesh.load(self._path, force="mesh")  # type: ignore[call-arg]
-                if hasattr(mesh, "geometry") and mesh.geometry:
-                    mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))  # type: ignore[assignment]
-                if hasattr(mesh, "vertices") and hasattr(mesh, "faces"):
-                    has_data = len(mesh.vertices) and len(mesh.faces)
-                    if has_data:
-                        vertices = np.asarray(mesh.vertices, dtype=np.float32)
-                        faces = np.asarray(mesh.faces, dtype=np.int32)
-            except Exception:
-                vertices = None
-                faces = None
+        if suffix in {".stl", ".obj", ".ply", ".glb", ".gltf"}:
+            trimesh_result = self._load_with_trimesh(self._path)
+            if trimesh_result is not None:
+                vertices, faces = trimesh_result
+
+        if (vertices is None or faces is None) and suffix == ".fbx":
+            fbx_result = self._load_fbx_mesh(self._path)
+            if fbx_result is not None:
+                vertices, faces = fbx_result
 
         if vertices is None or faces is None:
             if suffix in {".step", ".stp"}:
@@ -398,6 +400,139 @@ class ModelViewer(QOpenGLWidget):
         self._user_modified = False
         self._auto_fit_applied = False
         self._fit_to_view()
+
+    def _load_with_trimesh(self, path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+        if trimesh is None:
+            return None
+        try:
+            mesh = trimesh.load(path, force="mesh")  # type: ignore[call-arg]
+        except Exception:
+            return None
+
+        if hasattr(mesh, "geometry") and getattr(mesh, "geometry", None):
+            try:
+                mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))  # type: ignore[assignment]
+            except Exception:
+                return None
+
+        if not hasattr(mesh, "vertices") or not hasattr(mesh, "faces"):
+            return None
+
+        try:
+            has_data = len(mesh.vertices) and len(mesh.faces)
+        except Exception:
+            return None
+
+        if not has_data:
+            return None
+
+        vertices = np.asarray(mesh.vertices, dtype=np.float32)
+        faces = np.asarray(mesh.faces, dtype=np.int32)
+        if vertices.size == 0 or faces.size == 0:
+            return None
+        return vertices, faces
+
+    def _load_fbx_mesh(self, path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+        if fbx is None:
+            return None
+
+        manager = fbx.FbxManager.Create()
+        if manager is None:
+            return None
+        try:
+            ios = fbx.FbxIOSettings.Create(manager, fbx.IOSROOT)
+            manager.SetIOSettings(ios)
+
+            importer = fbx.FbxImporter.Create(manager, "")
+            if importer is None:
+                return None
+            try:
+                if not importer.Initialize(str(path), -1, manager.GetIOSettings()):
+                    return None
+
+                scene = fbx.FbxScene.Create(manager, "scene")
+                if scene is None:
+                    return None
+                if not importer.Import(scene):
+                    return None
+
+                converter = fbx.FbxGeometryConverter(manager)
+                try:
+                    converter.Triangulate(scene, True)
+                except Exception:
+                    # Even if triangulation fails we attempt to proceed.
+                    pass
+
+                root = scene.GetRootNode()
+                if root is None:
+                    return None
+
+                vertices: list[np.ndarray] = []
+                faces: list[list[int]] = []
+                offset = 0
+
+                def visit(node) -> None:  # type: ignore[no-untyped-def]
+                    nonlocal offset
+                    if node is None:
+                        return
+                    attr = node.GetNodeAttribute()
+                    if (
+                        attr is not None
+                        and attr.GetAttributeType() == fbx.FbxNodeAttribute.eMesh
+                    ):
+                        mesh = node.GetMesh()
+                        if mesh is not None:
+                            count = mesh.GetControlPointsCount()
+                            if count:
+                                control_points = mesh.GetControlPoints()
+                                verts = np.array(
+                                    [
+                                        (
+                                            float(control_points[i][0]),
+                                            float(control_points[i][1]),
+                                            float(control_points[i][2]),
+                                        )
+                                        for i in range(count)
+                                    ],
+                                    dtype=np.float32,
+                                )
+                                poly_count = mesh.GetPolygonCount()
+                                tris: list[list[int]] = []
+                                for poly in range(poly_count):
+                                    poly_size = mesh.GetPolygonSize(poly)
+                                    if poly_size < 3:
+                                        continue
+                                    indices = [
+                                        int(mesh.GetPolygonVertex(poly, j))
+                                        for j in range(poly_size)
+                                    ]
+                                    for j in range(1, len(indices) - 1):
+                                        tris.append(
+                                            [
+                                                indices[0] + offset,
+                                                indices[j] + offset,
+                                                indices[j + 1] + offset,
+                                            ]
+                                        )
+                                if verts.size and tris:
+                                    vertices.append(verts)
+                                    faces.extend(tris)
+                                    offset += verts.shape[0]
+                    for i in range(node.GetChildCount()):
+                        visit(node.GetChild(i))
+
+                visit(root)
+
+                if not vertices or not faces:
+                    return None
+                all_vertices = np.vstack(vertices).astype(np.float32)
+                all_faces = np.asarray(faces, dtype=np.int32)
+                return all_vertices, all_faces
+            finally:
+                importer.Destroy()
+        finally:
+            manager.Destroy()
+        return None
 
     def _build_box(
         self,
