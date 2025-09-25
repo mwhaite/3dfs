@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -223,7 +224,18 @@ def _create_text_shape(
         raise TransformationError("Text outline did not contain any faces")
 
     extrusion_direction = Vector(0.0, 0.0, depth)
-    extrusions = [face.extrude(extrusion_direction) for face in faces]
+
+    extrude_method = faces[0].extrude
+    parameter_count = len(inspect.signature(extrude_method).parameters)
+    if parameter_count == 1:
+        extrusions = [face.extrude(extrusion_direction) for face in faces]
+    else:
+        magnitude = float(extrusion_direction.length)
+        if magnitude == 0.0:
+            unit_direction = Vector(0.0, 0.0, 1.0)
+        else:
+            unit_direction = extrusion_direction / magnitude
+        extrusions = [face.extrude(magnitude, unit_direction) for face in faces]
     solid = extrusions[0] if len(extrusions) == 1 else Compound(extrusions)
     solid = _apply_matrix(solid, _translation_matrix((0.0, 0.0, -depth / 2.0)))
     if spacing != 1.0:
