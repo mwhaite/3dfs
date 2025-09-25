@@ -1,6 +1,6 @@
-/* [Customizer] Assembly runner plate generator
+/* [Customizer] Project runner plate generator
 
-   This OpenSCAD utility arranges the components of a multi-material assembly
+   This OpenSCAD utility arranges the components of a multi-material project
    onto runner plates reminiscent of old style plastic model kits. Components
    are grouped by material and colour so each plate can be printed in a single
    filament or resin. The script produces rectangular frames, a primary sprue,
@@ -40,10 +40,10 @@ group_label_font_size = 9; // [4:0.5:20]
 group_label_offset = 10; // [4:0.5:30]
 
 // -----------------------------------------------------------------------------
-// Assembly description
+// Project description
 // -----------------------------------------------------------------------------
 // Each entry: [name, material, colour, [size_x, size_y, size_z], shape_id, rotation_deg]
-assembly_parts = [
+project_parts = [
     ["fuselage_upper", "ABS", "Slate Gray", [92, 36, 18], "shell", 0],
     ["fuselage_lower", "ABS", "Slate Gray", [88, 34, 16], "shell", 0],
     ["canopy_frame", "PETG", "Carbon Black", [50, 28, 10], "frame", 0],
@@ -353,14 +353,14 @@ module runner_plate(plate_index, tag, parts, plate_dims) {
 module make_runner_system() {
     dims = plate_size();
     plate_dims = [dims[0], dims[1]];
-    groups = unique_groups(assembly_parts);
+    groups = unique_groups(project_parts);
     count = len(groups);
     if (count == 0) {
-        echo("Assembly contains no parts to arrange.");
+        echo("Project contains no parts to arrange.");
     } else if (render_mode == "Single plate") {
         idx = clamp_plate_index(selected_plate, count);
         tag = groups[idx];
-        parts = filter_parts_by_group(assembly_parts, tag);
+        parts = filter_parts_by_group(project_parts, tag);
         runner_plate(idx, tag, parts, [plate_dims[0], plate_dims[1]]);
     } else {
         cols = max(1, min(plates_per_row, count));
@@ -371,7 +371,7 @@ module make_runner_system() {
         origin_y = total_height / 2;
         for (plate_index = [0 : count - 1]) {
             tag = groups[plate_index];
-            parts = filter_parts_by_group(assembly_parts, tag);
+            parts = filter_parts_by_group(project_parts, tag);
             row = floor(plate_index / cols);
             col = plate_index % cols;
             offset_x = origin_x + col * (plate_dims[0] + plate_gap);

@@ -66,8 +66,8 @@ CREATE INDEX IF NOT EXISTS idx_asset_relationships_generated_asset_id
 CREATE INDEX IF NOT EXISTS idx_asset_relationships_relationship_type
     ON asset_relationships(relationship_type);
 
--- Assemblies: collections of assets/components
-CREATE TABLE IF NOT EXISTS assemblies (
+-- Projects: collections of assets/components
+CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     label TEXT NOT NULL,
@@ -77,20 +77,20 @@ CREATE TABLE IF NOT EXISTS assemblies (
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS assembly_components (
+CREATE TABLE IF NOT EXISTS project_components (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    assembly_id INTEGER NOT NULL REFERENCES assemblies(id) ON DELETE CASCADE,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     quantity INTEGER NOT NULL DEFAULT 1,
     order_index INTEGER NOT NULL DEFAULT 0,
     metadata TEXT NOT NULL DEFAULT '{}',
-    UNIQUE(assembly_id, asset_id, order_index)
+    UNIQUE(project_id, asset_id, order_index)
 );
 
-CREATE INDEX IF NOT EXISTS idx_assembly_components_assembly_id
-    ON assembly_components(assembly_id);
-CREATE INDEX IF NOT EXISTS idx_assembly_components_asset_id
-    ON assembly_components(asset_id);
+CREATE INDEX IF NOT EXISTS idx_project_components_project_id
+    ON project_components(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_components_asset_id
+    ON project_components(asset_id);
 """
 
 

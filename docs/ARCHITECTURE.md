@@ -12,7 +12,7 @@ flowchart TD
   subgraph UI[UI (PySide6)]
     SIDEBAR[Tag Sidebar]
     PREVIEW[Preview Pane]
-    ASSEMBLY[Assembly Pane]
+    PROJECT[Project Pane]
     IMPORT[Import Dialog]
   end
   APP --> UI
@@ -51,7 +51,7 @@ flowchart TD
 
   WATCHER[Filesystem Watcher]
   APP --> WATCHER
-  WATCHER --> ASSEMBLY
+  WATCHER --> PROJECT
 
   subgraph Customizer
     DIALOG[Customizer Panel]
@@ -68,7 +68,7 @@ flowchart TD
   end
 
   SIDEBAR -->|tag ops| SVC
-  ASSEMBLY -->|component metadata| SVC
+  PROJECT -->|component metadata| SVC
 ```
 
 Notes
@@ -77,7 +77,7 @@ Notes
 - Storage: the asset service wraps the repository layer which persists records directly in SQLite (assets, tags, customizations, relationships).
 - Thumbnails: generated on demand from assets and cached on disk for fast redraws.
 - Customizer: the preview pane launches the embedded panel which runs the execution pipeline and records derivative assets.
-- Assemblies: the app watches assembly folders for changes so the pane can refresh components and arrangement scripts automatically.
+- Projects: the app watches project folders for changes so the pane can refresh components and arrangement scripts automatically.
 - Data: managed assets and thumbnails live under the configured library root; metadata and tags reside in `~/.3dfs/assets.sqlite3`.
 
 Local commands

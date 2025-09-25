@@ -4,10 +4,10 @@
 
 ## Features
 
-* Repository browser, preview pane, assembly workspace, and tag sidebar built with PySide6 widgets for a cohesive desktop experience.
+* Repository browser, preview pane, project workspace, and tag sidebar built with PySide6 widgets for a cohesive desktop experience.
 * Thumbnail extraction, metadata inspection, and an integrated OpenGL viewer for STL, OBJ, STEP, GLB/GLTF, FBX, and PLY meshes.
 * Parametric customization pipeline with an OpenSCAD backend that records derivative assets and parameter schemas.
-* Assembly inspector that discovers arrangement scripts, attachments, and readme notes with live filesystem refresh.
+* Project inspector that discovers arrangement scripts, attachments, and readme notes with live filesystem refresh.
 * Pluggable importer that handles local files and remote identifiers via fetcher plugins and records detailed mesh metadata.
 * Persistent tagging, search, and derivative navigation backed by the asset service and tag store.
 
@@ -55,11 +55,11 @@ The main window loads persisted assets into a searchable repository list. Contex
 
 ### Preview and customization
 
-Selecting an asset populates the preview pane with thumbnails, metadata, and optional descriptions. The pane can switch between a cached thumbnail, an interactive OpenGL model viewer for `.stl`, `.obj`, `.ply`, `.fbx`, `.gltf`, or `.glb` meshes, and README content shipped alongside assemblies. When an asset is backed by a supported backend (such as OpenSCAD), the pane shows customization summaries, launchers, and embeds the customizer panel, surfacing parameter schemas, previous runs, and derivative actions without leaving the view.
+Selecting an asset populates the preview pane with thumbnails, metadata, and optional descriptions. The pane can switch between a cached thumbnail, an interactive OpenGL model viewer for `.stl`, `.obj`, `.ply`, `.fbx`, `.gltf`, or `.glb` meshes, and README content shipped alongside projects. When an asset is backed by a supported backend (such as OpenSCAD), the pane shows customization summaries, launchers, and embeds the customizer panel, surfacing parameter schemas, previous runs, and derivative actions without leaving the view.
 
-### Assembly workspace
+### Project workspace
 
-Assemblies open in a dedicated pane that lists components, attachments, and arrangement scripts. Users can search parts, refresh the current folder, launch attachments, or navigate to nested directories. Arrangement scripts discovered under `arrangements/` or `_arrangements/` get grouped automatically, while README files and breadcrumb navigation help document complex builds. A filesystem watcher keeps the pane in sync with on-disk changes.
+Projects open in a dedicated pane that lists components, attachments, and arrangement scripts. Users can search parts, refresh the current folder, launch attachments, or navigate to nested directories. Arrangement scripts discovered under `arrangements/` or `_arrangements/` get grouped automatically, while README files and breadcrumb navigation help document complex builds. A filesystem watcher keeps the pane in sync with on-disk changes.
 
 ## Asset library & storage
 
@@ -73,9 +73,9 @@ Use `three_dfs.importer.import_asset` to register local files or remote identifi
 
 The `three_dfs.customizer` package exposes a protocol for parameterised backends and an execution pipeline that stages builds under the managed library. When a customization runs, the pipeline records the parameter schema and values, persists generated artifacts as derivative assets, and links them back to the source customization for status tracking. The preview pane embeds the customizer dialog so users can rerun prior configurations, inspect parameter summaries, and open derivative outputs directly from the UI.
 
-## Assemblies
+## Projects
 
-Assembly folders can declare arrangement scripts inside `arrangements/` or `_arrangements/` directories. The discovery helpers merge newly found scripts with stored metadata, preserve custom labels, and ignore stale entries. Components classified as directories trigger navigation, while attachments remain accessible through context actions. The desktop shell watches assembly folders for changes and refreshes metadata after a short debounce so arrangement previews stay current.
+Project folders can declare arrangement scripts inside `arrangements/` or `_arrangements/` directories. The discovery helpers merge newly found scripts with stored metadata, preserve custom labels, and ignore stale entries. Components classified as directories trigger navigation, while attachments remain accessible through context actions. The desktop shell watches project folders for changes and refreshes metadata after a short debounce so arrangement previews stay current.
 
 ## Tagging and search
 

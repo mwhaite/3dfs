@@ -55,7 +55,7 @@ design_mirror_x = false;
 design_mirror_y = false;
 
 // -----------------------------------------------------------------------------
-// Output assembly
+// Output project
 // -----------------------------------------------------------------------------
 module base_geometry() {
     if (!use_builtin_plate && base_model != "") {
@@ -125,7 +125,7 @@ module scaled_design_profile() {
         import(design_file, convexity = import_convexity);
 }
 
-module emboss_assembly() {
+module emboss_project() {
     if (emboss_mode == "recessed") {
         difference() {
             base_geometry();
@@ -143,4 +143,4 @@ function clamp_radius(radius, length, width) =
     radius <= 0 ? 0 : min(radius, min(length, width) / 2 - 0.01);
 
 // Render the final model
-emboss_assembly();
+emboss_project();
