@@ -161,6 +161,29 @@ def test_importer_extracts_metadata_from_step(
     assert metadata["units"] == "millimetre"
 
 
+@pytest.mark.parametrize("extension", [".fbx", ".gltf", ".glb", ".ply"])
+def test_importer_accepts_extended_formats(
+    extension: str,
+    asset_service: AssetService,
+    managed_storage_root: Path,
+    tmp_path: Path,
+) -> None:
+    """Newly supported mesh formats should import without errors."""
+
+    candidate = tmp_path / f"model{extension}"
+    candidate.write_text("dummy contents", encoding="utf-8")
+
+    record = import_asset(
+        candidate,
+        service=asset_service,
+        storage_root=managed_storage_root,
+    )
+
+    assert record.path.endswith(extension)
+    assert record.metadata["extension"] == extension.lstrip(".").upper()
+    assert (managed_storage_root / Path(record.path).name).exists()
+
+
 def test_importer_rejects_unsupported_extension(
     asset_service: AssetService,
     managed_storage_root: Path,
@@ -168,7 +191,7 @@ def test_importer_rejects_unsupported_extension(
 ) -> None:
     """Importer should raise a helpful error when encountering bad formats."""
 
-    unsupported = tmp_path / "model.fbx"
+    unsupported = tmp_path / "model.3mf"
     unsupported.write_text("dummy contents", encoding="utf-8")
 
     with pytest.raises(UnsupportedAssetTypeError):
