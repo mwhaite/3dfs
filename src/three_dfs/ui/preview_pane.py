@@ -104,7 +104,7 @@ _TEXT_PREVIEW_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
-_TEXT_PREVIEW_MAX_BYTES = 200_000
+DEFAULT_TEXT_PREVIEW_MAX_BYTES = 200_000
 
 
 @dataclass(slots=True)
@@ -142,6 +142,7 @@ class PreviewWorker(QRunnable):
         asset_record: AssetRecord | None = None,
         thumbnail_cache: ThumbnailCache | None = None,
         size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+        text_preview_limit: int = DEFAULT_TEXT_PREVIEW_MAX_BYTES,
     ) -> None:
         super().__init__()
         self._token = token
@@ -151,6 +152,7 @@ class PreviewWorker(QRunnable):
         self._asset_record = asset_record
         self._thumbnail_cache = thumbnail_cache
         self._size = size
+        self._text_preview_limit = text_preview_limit
         self.signals = PreviewWorkerSignals()
 
     def run(self) -> None:  # pragma: no cover - exercised indirectly via signals
@@ -162,6 +164,7 @@ class PreviewWorker(QRunnable):
                 asset_record=self._asset_record,
                 thumbnail_cache=self._thumbnail_cache,
                 size=self._size,
+                text_preview_limit=self._text_preview_limit,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to generate preview for %s", self._path)
@@ -193,6 +196,7 @@ class PreviewPane(QWidget):
         self._thread_pool = QThreadPool.globalInstance()
         self._asset_service = asset_service
         self._thumbnail_cache = thumbnail_cache
+        self._text_preview_limit = DEFAULT_TEXT_PREVIEW_MAX_BYTES
 
         self._current_task_id: int | None = None
         self._task_counter = 0
@@ -532,6 +536,27 @@ class PreviewPane(QWidget):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def set_base_path(self, base_path: str | Path) -> None:
+        """Update the base path used to resolve relative asset references."""
+
+        self._base_path = Path(base_path).expanduser().resolve()
+
+    def text_preview_limit(self) -> int:
+        return self._text_preview_limit
+
+    def set_text_preview_limit(self, limit: int) -> None:
+        """Adjust how much text content is loaded for previews."""
+
+        minimum = 10_240
+        self._text_preview_limit = max(minimum, int(limit))
+
+    def reload_current_preview(self) -> None:
+        if self._current_absolute_path is None:
+            return
+        label = self._title_label.text() or "item"
+        self._show_message(f"Loading preview for {label}…")
+        self._enqueue_preview(self._current_absolute_path)
+
     def _resolve_path(self, raw_path: str) -> Path:
         candidate = Path(raw_path)
         if not candidate.is_absolute():
@@ -556,6 +581,7 @@ class PreviewPane(QWidget):
             asset_record=self._asset_record,
             thumbnail_cache=cache,
             size=DEFAULT_THUMBNAIL_SIZE,
+            text_preview_limit=self._text_preview_limit,
         )
         worker.signals.result.connect(self._handle_worker_result)
         worker.signals.error.connect(self._handle_worker_error)
@@ -1204,7 +1230,7 @@ def _textual_thumbnail_message(role: str | None) -> str:
 
 
 def _extract_text_preview(
-    path: Path, mime_type: str | None
+    path: Path, mime_type: str | None, *, max_bytes: int
 ) -> tuple[str | None, str | None, bool]:
     suffix = path.suffix.lower()
     if suffix in _IMAGE_EXTENSIONS or suffix in _MODEL_EXTENSIONS:
@@ -1212,7 +1238,7 @@ def _extract_text_preview(
 
     try:
         with path.open("rb") as handle:
-            raw = handle.read(_TEXT_PREVIEW_MAX_BYTES + 1)
+            raw = handle.read(max_bytes + 1)
     except OSError:
         return None, None, False
 
@@ -1223,9 +1249,9 @@ def _extract_text_preview(
     if b"\x00" in raw:
         return None, None, False
 
-    truncated = len(raw) > _TEXT_PREVIEW_MAX_BYTES
+    truncated = len(raw) > max_bytes
     if truncated:
-        raw = raw[:_TEXT_PREVIEW_MAX_BYTES]
+        raw = raw[:max_bytes]
 
     text = raw.decode("utf-8", errors="replace")
     role = _detect_text_role(path, mime_type, text)
@@ -1275,13 +1301,16 @@ def _build_preview_outcome(
     asset_record: AssetRecord | None = None,
     thumbnail_cache: ThumbnailCache | None = None,
     size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+    text_preview_limit: int = DEFAULT_TEXT_PREVIEW_MAX_BYTES,
 ) -> PreviewOutcome:
     if not path.exists():
         raise FileNotFoundError(f"{path} does not exist")
 
     mime_type, _ = mimetypes.guess_type(path.name)
 
-    text_content, text_role, truncated = _extract_text_preview(path, mime_type)
+    text_content, text_role, truncated = _extract_text_preview(
+        path, mime_type, max_bytes=text_preview_limit
+    )
 
     metadata: list[tuple[str, str]] = []
     stat = path.stat()

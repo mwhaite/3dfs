@@ -9,10 +9,11 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QFileSystemWatcher, Qt, QThreadPool, QTimer
+from PySide6.QtCore import QCoreApplication, QFileSystemWatcher, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -21,17 +22,24 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import get_config
+from ..config import configure, get_config
 from ..customizer.pipeline import PipelineResult
 from ..data import TagStore
 from ..importer import SUPPORTED_EXTENSIONS
 from ..project import build_attachment_metadata
 from ..storage import AssetService
-from ..ui import PreviewPane, ProjectPane, TagSidebar
+from ..ui import PreviewPane, ProjectPane, SettingsDialog, TagSidebar
 from .project_scanner import (
     ProjectRefreshRequest,
     ProjectScanOutcome,
     ProjectScanWorker,
+)
+from .settings import (
+    APPLICATION_NAME,
+    ORGANIZATION_NAME,
+    AppSettings,
+    load_app_settings,
+    save_app_settings,
 )
 
 WINDOW_TITLE = "3dfs"
@@ -48,6 +56,21 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(WINDOW_TITLE)
 
+        QCoreApplication.setOrganizationName(ORGANIZATION_NAME)
+        QCoreApplication.setApplicationName(APPLICATION_NAME)
+
+        config = get_config()
+        settings = load_app_settings(fallback_root=config.library_root)
+        if settings.library_root != config.library_root:
+            config = configure(library_root=settings.library_root)
+
+        self._settings: AppSettings = settings
+        self._env_bootstrap_demo = bool(os.environ.get("THREE_DFS_BOOTSTRAP_DEMO"))
+        self._bootstrap_demo_data = (
+            self._env_bootstrap_demo or self._settings.bootstrap_demo_data
+        )
+        self._auto_refresh_projects = self._settings.auto_refresh_projects
+
         self._asset_service = AssetService()
         self._tag_store = TagStore(service=self._asset_service)
         self._tag_sidebar = TagSidebar(
@@ -56,18 +79,19 @@ class MainWindow(QMainWindow):
         self._repository_list = QListWidget(self)
         self._repository_list.setObjectName("repositoryList")
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._toggle_repo_action: QAction | None = None
         # Right-click context menu on repository list
         self._repository_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self._repository_list.customContextMenuRequested.connect(
             self._show_repo_context_menu
         )
 
-        config = get_config()
         self._preview_pane = PreviewPane(
             base_path=config.library_root,
             asset_service=self._asset_service,
             parent=self,
         )
+        self._preview_pane.set_text_preview_limit(self._settings.text_preview_limit)
         self._preview_pane.setObjectName("previewPane")
         self._preview_pane.navigationRequested.connect(self._handle_preview_navigation)
         self._preview_pane.customizationGenerated.connect(
@@ -116,8 +140,8 @@ class MainWindow(QMainWindow):
         # assets already present in the configured library directory.
         if self._repository_list.count() == 0:
             self._rescan_library()
-        # Hide repository sidebar by default; project view takes the space
-        self._toggle_repository_sidebar(False)
+        # Apply persisted interface preferences
+        self._toggle_repository_sidebar(self._settings.show_repository_sidebar)
 
     # ------------------------------------------------------------------
     # Layout & wiring
@@ -179,8 +203,8 @@ class MainWindow(QMainWindow):
         """Populate the repository view with persisted asset entries."""
 
         self._repository_list.clear()
-        # By default show only persisted assets; opt-in demo seeding via env var.
-        if os.environ.get("THREE_DFS_BOOTSTRAP_DEMO"):
+        # By default show only persisted assets; opt-in demo seeding via settings.
+        if self._bootstrap_demo_data:
             assets = self._asset_service.bootstrap_demo_data()
         else:
             assets = self._asset_service.list_assets()
@@ -213,6 +237,13 @@ class MainWindow(QMainWindow):
         rescan_action.setShortcut("F5")
         rescan_action.triggered.connect(self._rescan_library)
         file_menu.addAction(rescan_action)
+
+        file_menu.addSeparator()
+
+        settings_action = QAction("Settings…", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self._open_settings_dialog)
+        file_menu.addAction(settings_action)
 
         # Project actions
         project_menu = menubar.addMenu("&Projects")
@@ -257,9 +288,55 @@ class MainWindow(QMainWindow):
         toggle_repo_action = QAction("Toggle Repository Sidebar", self)
         toggle_repo_action.setShortcut("Ctrl+R")
         toggle_repo_action.setCheckable(True)
-        toggle_repo_action.setChecked(False)
         toggle_repo_action.toggled.connect(self._toggle_repository_sidebar)
         sidebar_menu.addAction(toggle_repo_action)
+        toggle_repo_action.setChecked(self._settings.show_repository_sidebar)
+        self._toggle_repo_action = toggle_repo_action
+
+    def _open_settings_dialog(self) -> None:
+        dialog = SettingsDialog(self._settings, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        new_settings = dialog.result_settings()
+        if new_settings is None:
+            return
+        self._apply_settings(new_settings)
+
+    def _apply_settings(self, new_settings: AppSettings) -> None:
+        previous = self._settings
+        self._settings = new_settings
+        save_app_settings(new_settings)
+
+        previous_demo_state = (
+            self._env_bootstrap_demo or previous.bootstrap_demo_data
+        )
+        current_demo_state = (
+            self._env_bootstrap_demo or new_settings.bootstrap_demo_data
+        )
+        self._bootstrap_demo_data = current_demo_state
+        if previous_demo_state != current_demo_state:
+            self._populate_repository()
+
+        if new_settings.library_root != previous.library_root:
+            config = configure(library_root=new_settings.library_root)
+            self._preview_pane.set_base_path(config.library_root)
+            self._populate_repository()
+            self.statusBar().showMessage(f"Library: {config.library_root}", 5000)
+
+        if new_settings.show_repository_sidebar != previous.show_repository_sidebar:
+            toggle_action = getattr(self, "_toggle_repo_action", None)
+            if toggle_action is not None:
+                toggle_action.setChecked(new_settings.show_repository_sidebar)
+            else:
+                self._toggle_repository_sidebar(new_settings.show_repository_sidebar)
+
+        if new_settings.auto_refresh_projects != previous.auto_refresh_projects:
+            self._auto_refresh_projects = new_settings.auto_refresh_projects
+            self._update_project_watchers()
+
+        if new_settings.text_preview_limit != previous.text_preview_limit:
+            self._preview_pane.set_text_preview_limit(new_settings.text_preview_limit)
+            self._preview_pane.reload_current_preview()
 
     def _show_repo_context_menu(self, pos) -> None:
         current_item = self._repository_list.currentItem()
@@ -511,14 +588,10 @@ class MainWindow(QMainWindow):
                 asset_record=asset,
             )
             self._current_asset = asset
-        # Start watching this project folder for changes
-        try:
-            self._watch_project_folder(Path(asset.path))
-        except Exception:
-            pass
 
         self._detail_stack.setCurrentWidget(self._preview_pane)
         self._tag_sidebar.set_active_item(item_id)
+        self._update_project_watchers()
 
     def _show_project(self, asset) -> None:
         # Build component list from metadata["components"] entries
@@ -632,11 +705,7 @@ class MainWindow(QMainWindow):
         self._detail_stack.setCurrentWidget(self._project_pane)
         self._tag_sidebar.set_active_item(asset.path)
         self._current_asset = asset
-        # Start watching this project folder for changes
-        try:
-            self._watch_project_folder(Path(asset.path))
-        except Exception:
-            pass
+        self._update_project_watchers()
 
     def _handle_search_request(self, query: str) -> None:
         normalized = query.strip()
@@ -759,7 +828,6 @@ class MainWindow(QMainWindow):
 
         if should_show:
             self._show_project(outcome.asset)
-            self._current_asset = outcome.asset
             if focus_component:
                 try:
                     self._project_pane.select_item(focus_component)
@@ -769,10 +837,7 @@ class MainWindow(QMainWindow):
             if self._current_asset is not None and str(self._current_asset.path) == key:
                 self._current_asset = outcome.asset
 
-        try:
-            self._watch_project_folder(outcome.folder)
-        except Exception:  # noqa: BLE001
-            pass
+        self._update_project_watchers()
 
         if pending > 0:
             remaining = pending - 1
@@ -970,13 +1035,46 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._watched_dirs = set()
+        if not self._auto_refresh_projects:
+            return
         if folder.exists():
             self._fs_watcher.addPath(str(folder))
             self._watched_dirs.add(str(folder))
 
     def _on_fs_changed(self, changed_path: str) -> None:
         # Debounce refresh bursts
+        if not self._auto_refresh_projects:
+            return
         self._fs_debounce.start()
+
+    def _update_project_watchers(self) -> None:
+        if not self._auto_refresh_projects:
+            try:
+                if self._watched_dirs:
+                    self._fs_watcher.removePaths(list(self._watched_dirs))
+            except Exception:
+                pass
+            self._watched_dirs = set()
+            return
+
+        asset = self._current_asset
+        if (
+            asset is None
+            or not isinstance(asset.metadata, dict)
+            or str(asset.metadata.get("kind") or "").lower() != "project"
+        ):
+            try:
+                if self._watched_dirs:
+                    self._fs_watcher.removePaths(list(self._watched_dirs))
+            except Exception:
+                pass
+            self._watched_dirs = set()
+            return
+
+        try:
+            self._watch_project_folder(Path(asset.path))
+        except Exception:
+            pass
 
     def _open_item_folder(self, item_path: str) -> None:
         from PySide6.QtCore import QUrl
@@ -1044,6 +1142,7 @@ class MainWindow(QMainWindow):
             return
         if self._current_asset is not None and self._current_asset.id == asset.id:
             self._current_asset = asset
+            self._update_project_watchers()
         self._populate_repository()
         self._select_repository_path(path)
 
@@ -1066,6 +1165,7 @@ class MainWindow(QMainWindow):
             self._detail_stack.setCurrentWidget(self._preview_pane)
             self._tag_sidebar.set_active_item(asset.path)
             self._current_asset = asset
+            self._update_project_watchers()
 
     def _handle_customization_generated(self, result: PipelineResult) -> None:
         asset_path = result.output_path
@@ -1087,6 +1187,7 @@ class MainWindow(QMainWindow):
         )
         self._detail_stack.setCurrentWidget(self._preview_pane)
         self._current_asset = updated
+        self._update_project_watchers()
         self.statusBar().showMessage("Customization output recorded", 4000)
 
     def _rescan_library(self) -> None:
