@@ -377,16 +377,22 @@ class ProjectPane(QWidget):
 
     @Slot()
     def _show_components_context_menu(self, pos) -> None:
+        current_item = self._components.currentItem()
         try:
-            item = self._components.itemAt(pos)
+            clicked_item = self._components.itemAt(pos)
         except Exception:
-            item = None
-        if item is not None:
-            self._components.setCurrentItem(item)
+            clicked_item = None
+        item = clicked_item or current_item
+        if clicked_item is not None and clicked_item is not current_item:
+            self._components.setCurrentItem(clicked_item)
+            item = clicked_item
         navigate_target = self._resolve_component_navigation_target(item)
         menu = QMenu(self)
+        has_project = bool(self._project_path)
         new_part_act = menu.addAction("New Part…")
+        new_part_act.setEnabled(has_project)
         add_act = menu.addAction("Add Attachment(s) Here…")
+        add_act.setEnabled(has_project)
         open_item_act = menu.addAction("Open Item")
         open_item_act.setEnabled(self._can_open_with_handler(item))
         open_project_act = menu.addAction("Open Project")
@@ -405,6 +411,9 @@ class ProjectPane(QWidget):
                 action.setData(related)
                 related_actions[action] = related
         open_act = menu.addAction("Open Containing Folder")
+        open_act.setEnabled(
+            has_project or self._absolute_path_for_item(item) is not None
+        )
         action = menu.exec(self._components.mapToGlobal(pos))
         if action is None:
             return

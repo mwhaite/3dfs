@@ -262,25 +262,31 @@ class MainWindow(QMainWindow):
         sidebar_menu.addAction(toggle_repo_action)
 
     def _show_repo_context_menu(self, pos) -> None:
+        current_item = self._repository_list.currentItem()
         try:
-            item = self._repository_list.itemAt(pos)
+            clicked_item = self._repository_list.itemAt(pos)
         except Exception:
-            item = None
-        if item is not None:
+            clicked_item = None
+        item = clicked_item or current_item
+        if clicked_item is not None and clicked_item is not current_item:
             try:
-                self._repository_list.setCurrentItem(item)
+                self._repository_list.setCurrentItem(clicked_item)
             except Exception:
                 pass
+            item = clicked_item
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
         customize_act = None
-        if self._preview_pane.can_customize:
+        if item is not None and self._preview_pane.can_customize:
             customize_act = menu.addAction("Customize…")
             menu.addSeparator()
         new_project_act = menu.addAction("New Empty Project…")
         open_project_act = menu.addAction("Open as Project")
         open_folder_act = menu.addAction("Open Containing Folder")
+        has_selection = item is not None
+        open_project_act.setEnabled(has_selection)
+        open_folder_act.setEnabled(has_selection)
         global_pos = self._repository_list.mapToGlobal(pos)
         action = menu.exec(global_pos)
         if action is None:
