@@ -95,6 +95,7 @@ class ModelViewer(QOpenGLWidget):
         self._user_modified = False
         self._pan_x = 0.0
         self._pan_y = 0.0
+        self._last_error_message: str | None = None
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -103,8 +104,16 @@ class ModelViewer(QOpenGLWidget):
     # ------------------------------------------------------------------
     def set_path(self, path: Path) -> None:
         self._path = path
-        self._load_mesh()
+        success, error = self._load_mesh()
+        if not success:
+            self._last_error_message = error
+            raise ValueError(error or "Unable to load 3D model preview.")
+        self._last_error_message = None
         self.update()
+
+    @property
+    def last_error_message(self) -> str | None:
+        return self._last_error_message
 
     # ------------------------------------------------------------------
     # QOpenGLWidget overrides
@@ -336,24 +345,43 @@ class ModelViewer(QOpenGLWidget):
     def _to_vec3(self, arr: np.ndarray) -> QVector3D:
         return QVector3D(float(arr[0]), float(arr[1]), float(arr[2]))
 
-    def _load_mesh(self) -> None:
+    def _load_mesh(self) -> tuple[bool, str | None]:
         self._mesh = None
-        if self._path is None or not self._path.exists():
-            return
+        if self._path is None:
+            return False, "No model selected."
+        if not self._path.exists():
+            return False, "Model file does not exist."
 
         suffix = self._path.suffix.lower()
         vertices: np.ndarray | None = None
         faces: np.ndarray | None = None
+        error_message: str | None = None
 
         if suffix in {".stl", ".obj", ".ply", ".glb", ".gltf"}:
+            if trimesh is None:
+                return (
+                    False,
+                    "Install the `trimesh` dependency to enable "
+                    "STL/OBJ/PLY/GLB/GLTF previews.",
+                )
             trimesh_result = self._load_with_trimesh(self._path)
             if trimesh_result is not None:
                 vertices, faces = trimesh_result
+            else:
+                label = suffix.lstrip(".").upper() or "3D"
+                error_message = f"Could not parse {label} mesh."
 
         if (vertices is None or faces is None) and suffix == ".fbx":
+            if fbx is None:
+                return (
+                    False,
+                    "Autodesk FBX SDK is not available, so FBX previews are disabled.",
+                )
             fbx_result = self._load_fbx_mesh(self._path)
             if fbx_result is not None:
                 vertices, faces = fbx_result
+            else:
+                error_message = "Could not parse FBX mesh."
 
         if vertices is None or faces is None:
             if suffix in {".step", ".stp"}:
@@ -367,7 +395,10 @@ class ModelViewer(QOpenGLWidget):
                 vertices, faces = v, f
 
         if vertices is None or faces is None:
-            return
+            if error_message is None:
+                label = suffix.lstrip(".").upper() or "this format"
+                error_message = f"3D preview is not available for {label}."
+            return False, error_message
 
         # Compute normals
         normals = np.zeros_like(vertices, dtype=np.float32)
@@ -400,6 +431,7 @@ class ModelViewer(QOpenGLWidget):
         self._user_modified = False
         self._auto_fit_applied = False
         self._fit_to_view()
+        return True, None
 
     def _load_with_trimesh(self, path: Path) -> tuple[np.ndarray, np.ndarray] | None:
         if trimesh is None:

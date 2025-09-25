@@ -206,6 +206,8 @@ class PreviewPane(QWidget):
         self._customizer_context: CustomizerSessionConfig | None = None
         self._customizer_dialog: CustomizerDialog | None = None
         self._customization_action_buttons: list[QPushButton] = []
+        self._viewer_error_message: str | None = None
+        self._text_unavailable_message: str | None = None
 
         self._title_label = QLabel("Preview", self)
         self._title_label.setObjectName("previewTitle")
@@ -368,9 +370,13 @@ class PreviewPane(QWidget):
         self._description_label.setVisible(False)
         self._metadata_list.clear()
         self._thumbnail_label.setToolTip("")
+        self._viewer_error_message = None
+        self._text_unavailable_message = None
         self._tabs.setTabEnabled(self._viewer_tab_index, False)
         self._tabs.setTabEnabled(self._readme_tab_index, False)
         self._tabs.setTabEnabled(self._text_tab_index, False)
+        self._tabs.setTabToolTip(self._viewer_tab_index, "")
+        self._tabs.setTabToolTip(self._text_tab_index, "")
         self._text_view.clear()
         self._tabs.setTabText(self._text_tab_index, "Text")
         self._tabs.setTabEnabled(self._customizer_tab_index, False)
@@ -423,6 +429,8 @@ class PreviewPane(QWidget):
         self._current_pixmap = None
         self._current_thumbnail_message = None
         self._thumbnail_label.setToolTip("")
+        self._viewer_error_message = None
+        self._text_unavailable_message = None
         self._customizer_context = None
         self._customize_button.setVisible(False)
         self._customize_button.setEnabled(False)
@@ -437,21 +445,44 @@ class PreviewPane(QWidget):
 
         # Prepare viewer tab
         suffix = absolute_path.suffix.lower()
+        self._tabs.setTabToolTip(self._viewer_tab_index, "")
         if suffix in _MODEL_EXTENSIONS:
             try:
                 self._viewer.set_path(absolute_path)
                 self._tabs.setTabEnabled(self._viewer_tab_index, True)
+                self._tabs.setTabToolTip(
+                    self._viewer_tab_index,
+                    "Interactive 3D viewer for supported meshes.",
+                )
             except Exception:
                 self._tabs.setTabEnabled(self._viewer_tab_index, False)
+                message = (
+                    getattr(self._viewer, "last_error_message", None)
+                    or "3D preview is unavailable for this file."
+                )
+                self._viewer_error_message = message
+                self._tabs.setTabToolTip(self._viewer_tab_index, message)
         else:
             self._tabs.setCurrentIndex(0)
             self._tabs.setTabEnabled(self._viewer_tab_index, False)
+            self._tabs.setTabToolTip(
+                self._viewer_tab_index,
+                "3D viewer is only available for supported model formats.",
+            )
 
         # Load README tab from the asset's folder if present
         if self._load_readme_for(absolute_path):
             self._tabs.setTabEnabled(self._readme_tab_index, True)
         else:
             self._tabs.setTabEnabled(self._readme_tab_index, False)
+
+        if suffix not in _TEXT_PREVIEW_EXTENSIONS:
+            self._text_unavailable_message = (
+                "Text preview is unavailable for this file."
+            )
+        else:
+            self._text_unavailable_message = None
+        self._tabs.setTabToolTip(self._text_tab_index, "")
 
         self._show_message(f"Loading preview for {display_label}…")
         self._enqueue_preview(absolute_path)
@@ -1031,7 +1062,12 @@ class PreviewPane(QWidget):
             self._thumbnail_label.setToolTip(message)
 
         self._configure_text_preview(outcome)
-        self._populate_metadata(outcome.metadata)
+        metadata_entries = list(outcome.metadata)
+        if self._viewer_error_message:
+            metadata_entries.append(("3D Viewer", self._viewer_error_message))
+        if outcome.text_content is None and self._text_unavailable_message:
+            metadata_entries.append(("Text Preview", self._text_unavailable_message))
+        self._populate_metadata(metadata_entries)
         if self._current_absolute_path is not None:
             self._prepare_customizer(self._current_absolute_path)
 
@@ -1040,17 +1076,24 @@ class PreviewPane(QWidget):
             self._text_view.clear()
             self._tabs.setTabText(self._text_tab_index, "Text")
             self._tabs.setTabEnabled(self._text_tab_index, False)
-            self._text_view.setToolTip("")
+            message = self._text_unavailable_message
+            if not message:
+                message = "Text preview is unavailable for this file."
+            self._text_unavailable_message = message
+            self._tabs.setTabToolTip(self._text_tab_index, message)
+            self._text_view.setToolTip(message)
             return
 
         tab_label = _text_tab_label(outcome.text_role)
         self._text_view.setPlainText(outcome.text_content)
         self._tabs.setTabText(self._text_tab_index, tab_label)
         self._tabs.setTabEnabled(self._text_tab_index, True)
+        self._tabs.setTabToolTip(self._text_tab_index, "")
         if outcome.text_truncated:
             self._text_view.setToolTip("Preview truncated for large file")
         else:
             self._text_view.setToolTip("")
+        self._text_unavailable_message = None
 
         if self._current_pixmap is None and not self._tabs.isTabEnabled(
             self._viewer_tab_index

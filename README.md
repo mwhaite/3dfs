@@ -5,7 +5,7 @@
 ## Features
 
 * Repository browser, preview pane, project workspace, and tag sidebar built with PySide6 widgets for a cohesive desktop experience.
-* Thumbnail extraction, metadata inspection, and an integrated OpenGL viewer for STL, OBJ, STEP, GLB/GLTF, FBX, and PLY meshes.
+* Thumbnail extraction, metadata inspection, and an integrated OpenGL viewer for STL, OBJ, PLY, GLB/GLTF, and FBX meshes (FBX requires the Autodesk FBX SDK; other meshes rely on `trimesh`). STEP assets render via bounding boxes when full meshes are unavailable.
 * Parametric customization pipeline with an OpenSCAD backend that records derivative assets and parameter schemas.
 * Project inspector that discovers arrangement scripts, attachments, and readme notes with live filesystem refresh.
 * Pluggable importer that handles local files and remote identifiers via fetcher plugins and records detailed mesh metadata.
@@ -55,7 +55,7 @@ The main window loads persisted assets into a searchable repository list. Contex
 
 ### Preview and customization
 
-Selecting an asset populates the preview pane with thumbnails, metadata, and optional descriptions. The pane can switch between a cached thumbnail, an interactive OpenGL model viewer for `.stl`, `.obj`, `.ply`, `.fbx`, `.gltf`, or `.glb` meshes, and README content shipped alongside projects. When an asset is backed by a supported backend (such as OpenSCAD), the pane shows customization summaries, launchers, and embeds the customizer panel, surfacing parameter schemas, previous runs, and derivative actions without leaving the view.
+Selecting an asset populates the preview pane with thumbnails, metadata, and optional descriptions. The pane can switch between a cached thumbnail, an interactive OpenGL model viewer for `.stl`, `.obj`, `.ply`, `.fbx`, `.gltf`, or `.glb` meshes, and README content shipped alongside projects. FBX rendering requires the Autodesk FBX SDK while the other mesh formats use `trimesh`; when either dependency is missing or the model fails to parse the 3D tab is disabled with an explanatory tooltip and the metadata callout documents the limitation. Text previews follow the same approach, disabling the tab with a message when a format cannot be decoded so users never land on an empty view. When an asset is backed by a supported backend (such as OpenSCAD), the pane shows customization summaries, launchers, and embeds the customizer panel, surfacing parameter schemas, previous runs, and derivative actions without leaving the view.
 
 ### Project workspace
 
