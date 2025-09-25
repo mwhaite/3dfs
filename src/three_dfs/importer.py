@@ -36,7 +36,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS: Final[frozenset[str]] = frozenset(
-    {".stl", ".obj", ".step", ".stp"}
+    {".fbx", ".gltf", ".glb", ".obj", ".ply", ".step", ".stl", ".stp"}
 )
 """Supported file extensions for imported assets."""
 
