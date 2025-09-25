@@ -59,7 +59,7 @@ Selecting an asset populates the preview pane with thumbnails, metadata, and opt
 
 ### Project workspace
 
-Projects open in a dedicated pane that lists components, attachments, and arrangement scripts. Users can search parts, refresh the current folder, launch attachments, or navigate to nested directories. Arrangement scripts discovered under `arrangements/` or `_arrangements/` get grouped automatically, while README files and breadcrumb navigation help document complex builds. A filesystem watcher keeps the pane in sync with on-disk changes.
+Projects open in a dedicated pane that lists components, attachments, and arrangement scripts. Each project corresponds to a directory inside the configured library root and the application treats its immediate children as parts. Users can search parts, refresh the current folder, launch attachments, or navigate to nested directories. Arrangement scripts discovered under `arrangements/` or `_arrangements/` get grouped automatically, while README files and breadcrumb navigation help document complex builds. A filesystem watcher keeps the pane in sync with on-disk changes.
 
 ## Asset library & storage
 
