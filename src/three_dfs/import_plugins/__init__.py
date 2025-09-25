@@ -217,3 +217,9 @@ def scaffold_plugin(repo_name: str, target_dir: Path | str) -> Path:
     destination.write_text(template, encoding="utf-8")
     logger.info("Plugin scaffold written to %s", destination)
     return destination
+
+
+try:  # pragma: no cover - import side effects exercised elsewhere
+    from . import thingiverse_plugin as _thingiverse_plugin  # noqa: F401
+except Exception:  # pragma: no cover - defensive logging
+    logger.exception("Failed to import built-in Thingiverse plugin")
