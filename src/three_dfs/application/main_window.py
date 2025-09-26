@@ -27,6 +27,7 @@ from ..customizer.pipeline import PipelineResult
 from ..data import TagStore
 from ..importer import SUPPORTED_EXTENSIONS
 from ..project import build_attachment_metadata
+from ..search import LibrarySearch
 from ..storage import AssetService
 from ..ui import PreviewPane, ProjectPane, SettingsDialog, TagSidebar
 from .project_scanner import (
@@ -72,6 +73,7 @@ class MainWindow(QMainWindow):
         self._auto_refresh_projects = self._settings.auto_refresh_projects
 
         self._asset_service = AssetService()
+        self._library_search = LibrarySearch(service=self._asset_service)
         self._tag_store = TagStore(service=self._asset_service)
         self._tag_sidebar = TagSidebar(
             self._tag_store, asset_service=self._asset_service
@@ -727,22 +729,43 @@ class MainWindow(QMainWindow):
             if hasattr(self, "_repo_search_input")
             else ""
         )
-        text_needle = raw_text.strip().casefold()
+        query = raw_text.strip()
+        text_needle = query.casefold()
         tag_matches = getattr(self, "_tag_filter_matches", None)
+        search_paths = self._run_library_search(query) if query else None
 
         for row in range(self._repository_list.count()):
             item = self._repository_list.item(row)
             path = str(item.data(Qt.UserRole) or item.text())
             label = item.text()
             matches_tag = True if tag_matches is None else (path in tag_matches)
-            if not text_needle:
-                matches_text = True
+            if search_paths is None:
+                if not text_needle:
+                    matches_text = True
+                else:
+                    label_case = (label or "").casefold()
+                    matches_text = (
+                        text_needle in label_case or text_needle in path.casefold()
+                    )
             else:
-                label_case = (label or "").casefold()
-                matches_text = (
-                    text_needle in label_case or text_needle in path.casefold()
-                )
+                matches_text = path in search_paths
             item.setHidden(not (matches_tag and matches_text))
+
+    def _run_library_search(self, query: str) -> set[str] | None:
+        """Return asset paths that match *query* using :mod:`three_dfs.search`."""
+
+        try:
+            hits = self._library_search.search(query)
+        except Exception:
+            logger.exception("Failed to execute library search", exc_info=True)
+            return None
+
+        matches: set[str] = set()
+        for hit in hits:
+            target = hit.project_path or hit.path
+            if target:
+                matches.add(target)
+        return matches
 
     # ------------------------------------------------------------------
     # Project helpers
