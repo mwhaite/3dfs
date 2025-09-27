@@ -8,6 +8,15 @@ from pathlib import Path
 DEFAULT_DB_FILENAME = "assets.sqlite3"
 DEFAULT_DB_PATH = Path.home() / ".3dfs" / DEFAULT_DB_FILENAME
 
+# Capture references to the standard library ``sqlite3`` module objects at import
+# time.  Some environments attempt to monkeypatch ``sqlite3`` (for example by
+# installing custom import hooks) which can lead to recursive imports when the
+# storage layer requests a fresh connection.  Holding on to the original module
+# level callables avoids that recursion and ensures we always talk to the real
+# SQLite driver.
+_SQLITE3_CONNECT = sqlite3.connect
+_SQLITE3_ROW = sqlite3.Row
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,8 +135,8 @@ class SQLiteStorage:
     def connect(self) -> sqlite3.Connection:
         """Return a new SQLite connection with required pragmas applied."""
 
-        connection = sqlite3.connect(self._database)
-        connection.row_factory = sqlite3.Row
+        connection = _SQLITE3_CONNECT(self._database)
+        connection.row_factory = _SQLITE3_ROW
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
