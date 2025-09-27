@@ -14,8 +14,13 @@ DEFAULT_DB_PATH = Path.home() / ".3dfs" / DEFAULT_DB_FILENAME
 # storage layer requests a fresh connection.  Holding on to the original module
 # level callables avoids that recursion and ensures we always talk to the real
 # SQLite driver.
-_SQLITE3_CONNECT = sqlite3.connect
-_SQLITE3_ROW = sqlite3.Row
+try:
+    _SQLITE3_CONNECT = sqlite3.connect
+    _SQLITE3_ROW = sqlite3.Row
+except RecursionError:
+    # Fallback to direct module access if capturing references causes recursion
+    _SQLITE3_CONNECT = None
+    _SQLITE3_ROW = sqlite3.Row
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS assets (
@@ -135,7 +140,11 @@ class SQLiteStorage:
     def connect(self) -> sqlite3.Connection:
         """Return a new SQLite connection with required pragmas applied."""
 
-        connection = _SQLITE3_CONNECT(self._database)
+        if _SQLITE3_CONNECT is not None:
+            connection = _SQLITE3_CONNECT(self._database)
+        else:
+            # Fallback to direct module access
+            connection = sqlite3.connect(self._database)
         connection.row_factory = _SQLITE3_ROW
         connection.execute("PRAGMA foreign_keys = ON")
         return connection

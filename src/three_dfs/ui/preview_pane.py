@@ -564,7 +564,11 @@ class PreviewPane(QWidget):
             candidate = os.path.join(str(self._base_path), raw_path)
         else:
             candidate = raw_path
-        return os.path.realpath(candidate)
+        try:
+            return os.path.realpath(candidate)
+        except RecursionError:
+            # Fallback to abspath if realpath hits recursion
+            return os.path.abspath(candidate)
 
     def _enqueue_preview(self, absolute_path: Path) -> None:
         self._task_counter += 1
