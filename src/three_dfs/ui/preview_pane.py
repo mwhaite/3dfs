@@ -418,8 +418,18 @@ class PreviewPane(QWidget):
         absolute_path = self._resolve_path(path)
         self._current_absolute_path = absolute_path
 
-        path_obj = Path(absolute_path)
-        display_label = label or path_obj.name
+        try:
+            path_obj = Path(absolute_path)
+            display_label = label or path_obj.name
+            suffix = path_obj.suffix.lower()
+        except (RecursionError, AttributeError, OSError):
+            # Handle corrupted path objects or filesystem issues
+            display_label = label or absolute_path.split('/')[-1] if '/' in absolute_path else absolute_path
+            suffix = ""
+            if '.' in display_label:
+                suffix = display_label.split('.')[-1].lower()
+            path_obj = None
+        
         self._title_label.setText(display_label)
         self._path_label.setText(path)
 
@@ -450,9 +460,8 @@ class PreviewPane(QWidget):
         self._tabs.setTabEnabled(self._text_tab_index, False)
 
         # Prepare viewer tab
-        suffix = path_obj.suffix.lower()
         self._tabs.setTabToolTip(self._viewer_tab_index, "")
-        if suffix in _MODEL_EXTENSIONS:
+        if suffix in _MODEL_EXTENSIONS and path_obj is not None:
             try:
                 self._viewer.set_path(path_obj)
                 self._tabs.setTabEnabled(self._viewer_tab_index, True)
@@ -477,7 +486,7 @@ class PreviewPane(QWidget):
             )
 
         # Load README tab from the asset's folder if present
-        if self._load_readme_for(path_obj):
+        if path_obj is not None and self._load_readme_for(path_obj):
             self._tabs.setTabEnabled(self._readme_tab_index, True)
         else:
             self._tabs.setTabEnabled(self._readme_tab_index, False)
@@ -490,12 +499,18 @@ class PreviewPane(QWidget):
             self._text_unavailable_message = None
         self._tabs.setTabToolTip(self._text_tab_index, "")
 
-        self._show_message(f"Loading preview for {display_label}…")
-        self._enqueue_preview(path_obj)
-        self._prepare_customizer(path_obj)
+        if path_obj is not None:
+            self._show_message(f"Loading preview for {display_label}…")
+            self._enqueue_preview(path_obj)
+            self._prepare_customizer(path_obj)
+        else:
+            self._show_message(f"Unable to load preview for {display_label} - path resolution failed")
 
     def _load_readme_for(self, path: Path) -> bool:
-        base_dir = path if path.is_dir() else path.parent
+        try:
+            base_dir = path if path.is_dir() else path.parent
+        except (RecursionError, AttributeError, OSError):
+            return False
         allowed = {"", ".md", ".markdown", ".txt", ".rst"}
         candidates = []
         try:
