@@ -25,7 +25,7 @@ except RecursionError:
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    path TEXT NOT NULL UNIQUE,
+    path TEXT NOT NULL UNIQUE CHECK(length(path) < 4096),
     label TEXT NOT NULL,
     metadata TEXT,
     created_at TEXT NOT NULL,
@@ -147,6 +147,23 @@ class SQLiteStorage:
             connection = sqlite3.connect(self._database)
         connection.row_factory = _SQLITE3_ROW
         connection.execute("PRAGMA foreign_keys = ON")
+        
+        # DEBUG: Add logging to detect if we're reading corrupted data
+        original_row_factory = connection.row_factory
+        
+        def debug_row_factory(cursor, row):
+            result = original_row_factory(cursor, row)
+            # Check if this is an assets table query and log suspicious paths
+            if hasattr(result, 'keys') and 'path' in result.keys():
+                path_value = result['path']
+                if isinstance(path_value, str) and len(path_value) > 1000:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error("SUSPICIOUS PATH FROM DATABASE: len=%d, sample=%r", 
+                               len(path_value), path_value[:200])
+            return result
+        
+        connection.row_factory = debug_row_factory
         return connection
 
     # ------------------------------------------------------------------
