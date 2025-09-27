@@ -145,6 +145,60 @@ class MainWindow(QMainWindow):
         # Apply persisted interface preferences
         self._toggle_repository_sidebar(self._settings.show_repository_sidebar)
 
+    def _is_safe_path_string(self, path_str: str) -> bool:
+        """Validate that a path string is safe before any Path operations."""
+        try:
+            # Basic type and length checks
+            if not isinstance(path_str, str):
+                return False
+            if len(path_str) > 4096:
+                return False
+            if not path_str.strip():
+                return False
+            
+            # Check for null bytes and other problematic characters
+            if '\x00' in path_str or '\r' in path_str:
+                return False
+            
+            # Check for excessive repetition that might indicate circular references
+            normalized = path_str.replace('\\', '/')
+            
+            # Count path separators - too many might indicate a problem
+            if normalized.count('/') > 100:
+                return False
+            
+            # Check for repeated patterns that suggest circular references
+            if '..' in normalized:
+                dotdot_count = normalized.count('..')
+                if dotdot_count > 50:
+                    return False
+            
+            # Check for excessive repetition of the same substring
+            if len(normalized) > 500:
+                # Look for repeated substrings that might indicate circular references
+                for length in [10, 20, 50]:
+                    if len(normalized) > length * 10:
+                        for i in range(len(normalized) - length):
+                            substr = normalized[i:i+length]
+                            if normalized.count(substr) > 10:
+                                return False
+            
+            # Try a basic Path operation to see if it causes recursion
+            # Use a timeout-like approach by limiting the string length we test
+            test_str = normalized[:1000]  # Limit test to reasonable length
+            try:
+                # This is the critical test - if this causes recursion, reject the path
+                from pathlib import Path
+                test_path = Path(test_str)
+                _ = str(test_path)  # Force evaluation
+                _ = test_path.parts  # Test parts access
+                return True
+            except (RecursionError, ValueError, OSError):
+                return False
+                
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------
     # Layout & wiring
     # ------------------------------------------------------------------
@@ -211,18 +265,29 @@ class MainWindow(QMainWindow):
         else:
             assets = self._asset_service.list_assets()
 
+        valid_assets = 0
         for asset in assets:
+            # FUNDAMENTAL FIX: Validate asset paths before adding to UI
+            if not self._is_safe_path_string(asset.path):
+                logger.warning("Skipping asset with corrupted path: %r", asset.path[:200] if len(asset.path) > 200 else asset.path)
+                continue
+                
             display_label = asset.label or asset.path
             item = QListWidgetItem(display_label)
             item.setData(Qt.UserRole, asset.path)
             item.setToolTip(asset.path)
             self._repository_list.addItem(item)
+            valid_assets += 1
 
         if self._repository_list.count():
             self._repository_list.setCurrentRow(0)
         else:
             # Surface the current library root to help users locate files.
             self.statusBar().showMessage(f"Library: {get_config().library_root}", 5000)
+        
+        if valid_assets < len(assets):
+            skipped = len(assets) - valid_assets
+            self.statusBar().showMessage(f"Loaded {valid_assets} assets, skipped {skipped} with invalid paths", 3000)
 
     # ------------------------------------------------------------------
     # Menu & actions
@@ -519,6 +584,15 @@ class MainWindow(QMainWindow):
 
         item_id = current.data(Qt.UserRole) or current.text()
         item_id = str(item_id)
+        
+        # FUNDAMENTAL FIX: Validate path data at the source
+        if not self._is_safe_path_string(item_id):
+            logger.error("Corrupted path detected in selection: %r", item_id[:200] if len(item_id) > 200 else item_id)
+            self._preview_pane.clear()
+            self._tag_sidebar.set_active_item(None)
+            self.statusBar().showMessage("Invalid path data detected - skipping selection", 5000)
+            return
+        
         asset = self._asset_service.get_asset_by_path(item_id)
 
         # Project detection: assets with kind == 'project' in metadata

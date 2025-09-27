@@ -410,6 +410,12 @@ class PreviewPane(QWidget):
             self.clear()
             return
 
+        # FUNDAMENTAL FIX: Validate path at the very entry point
+        if not self._is_safe_path_string(path):
+            logger.error("Rejecting unsafe path string: %r", path[:200] if len(path) > 200 else path)
+            self._show_message(f"Invalid path detected: {path[:100]}...")
+            return
+
         self._asset_record = asset_record
         self._asset_metadata = dict(metadata) if metadata else {}
         if not self._asset_metadata and asset_record is not None:
@@ -609,98 +615,72 @@ class PreviewPane(QWidget):
         self._show_message(f"Loading preview for {label}…")
         self._enqueue_preview(Path(self._current_absolute_path))
 
+    def _is_safe_path_string(self, path_str: str) -> bool:
+        """Validate that a path string is safe before any Path operations."""
+        try:
+            # Basic type and length checks
+            if not isinstance(path_str, str):
+                return False
+            if len(path_str) > 4096:
+                return False
+            if not path_str.strip():
+                return False
+            
+            # Check for null bytes and other problematic characters
+            if '\x00' in path_str or '\r' in path_str:
+                return False
+            
+            # Check for excessive repetition that might indicate circular references
+            normalized = path_str.replace('\\', '/')
+            
+            # Count path separators - too many might indicate a problem
+            if normalized.count('/') > 100:
+                return False
+            
+            # Check for repeated patterns that suggest circular references
+            if '..' in normalized:
+                dotdot_count = normalized.count('..')
+                if dotdot_count > 50:
+                    return False
+            
+            # Check for excessive repetition of the same substring
+            if len(normalized) > 500:
+                # Look for repeated substrings that might indicate circular references
+                for length in [10, 20, 50]:
+                    if len(normalized) > length * 10:
+                        for i in range(len(normalized) - length):
+                            substr = normalized[i:i+length]
+                            if normalized.count(substr) > 10:
+                                return False
+            
+            # Try a basic Path operation to see if it causes recursion
+            # Use a timeout-like approach by limiting the string length we test
+            test_str = normalized[:1000]  # Limit test to reasonable length
+            try:
+                # This is the critical test - if this causes recursion, reject the path
+                test_path = Path(test_str)
+                _ = str(test_path)  # Force evaluation
+                _ = test_path.parts  # Test parts access
+                return True
+            except (RecursionError, ValueError, OSError):
+                return False
+                
+        except Exception:
+            return False
+
     def _resolve_path(self, raw_path: str) -> str:
-        # Validate and sanitize the input path first
-        if not raw_path or not isinstance(raw_path, str):
-            raise ValueError("Invalid path: empty or non-string")
-        
-        # Check for obvious circular references or malformed paths
-        if len(raw_path) > 4096:  # Reasonable path length limit
-            raise ValueError("Path too long, possible circular reference")
-        
-        # Detect circular patterns in the path string itself
+        """Resolve a path string to an absolute path."""
+        # At this point, the path has already been validated by _is_safe_path_string
         normalized = raw_path.replace('\\', '/')
         
-        # Check for excessive repetition of path separators or components
-        if '//' in normalized or '///' in normalized:
-            # Clean up multiple slashes but check for excessive patterns
-            cleaned = normalized
-            while '//' in cleaned:
-                cleaned = cleaned.replace('//', '/')
-            if len(cleaned) != len(normalized) and len(normalized) > 1000:
-                raise ValueError("Path contains excessive repeated separators")
-            normalized = cleaned
-        
-        # Check for circular .. patterns
-        if '..' in normalized:
-            parts = normalized.split('/')
-            if len(parts) > 100:  # Too many path components
-                raise ValueError("Path has too many components, possible circular reference")
-            
-            # Check for patterns like ../../../../../../ repeated excessively
-            dotdot_count = sum(1 for part in parts if part == '..')
-            if dotdot_count > 50:  # Reasonable limit for parent directory traversal
-                raise ValueError("Excessive parent directory traversal, possible circular reference")
-        
-        # Check for other suspicious patterns
-        suspicious_patterns = ['/./', '/../', '/.//', '/..//']
-        for pattern in suspicious_patterns:
-            if pattern in normalized and normalized.count(pattern) > 20:
-                raise ValueError(f"Suspicious repeated pattern detected: {pattern}")
-        
-        # Additional check: if the path contains the same directory name repeated many times
-        parts = [p for p in normalized.split('/') if p and p != '.' and p != '..']
-        if parts:
-            from collections import Counter
-            part_counts = Counter(parts)
-            max_count = max(part_counts.values()) if part_counts else 0
-            if max_count > 20:  # Same directory name repeated too many times
-                raise ValueError("Path contains excessively repeated directory names")
-        
-        # Now try to resolve the path safely
-        try:
-            if not normalized.startswith('/'):  # Not absolute
-                base_str = str(self._base_path)
-                # Manually join to avoid os.path.join issues with corrupted paths
-                if base_str.endswith('/'):
-                    candidate = base_str + normalized
-                else:
-                    candidate = base_str + '/' + normalized
+        if normalized.startswith('/'):
+            return normalized
+        else:
+            base_str = str(self._base_path)
+            if base_str.endswith('/'):
+                return base_str + normalized
             else:
-                candidate = normalized
-            
-            # Manually normalize the path instead of using os.path functions
-            # Split into parts and resolve . and .. manually
-            parts = candidate.split('/')
-            resolved_parts = []
-            
-            for part in parts:
-                if part == '' or part == '.':
-                    continue
-                elif part == '..':
-                    if resolved_parts:
-                        resolved_parts.pop()
-                else:
-                    resolved_parts.append(part)
-            
-            # Reconstruct the path
-            if candidate.startswith('/'):
-                resolved = '/' + '/'.join(resolved_parts)
-            else:
-                resolved = '/'.join(resolved_parts)
-            
-            # Final validation
-            if len(resolved) > 4096:
-                raise ValueError("Resolved path too long")
-            
-            # Ensure we don't have any remaining suspicious patterns
-            if resolved.count('..') > 10 or resolved.count('./') > 10:
-                raise ValueError("Resolved path still contains suspicious patterns")
-                
-            return resolved
-            
-        except (RecursionError, OSError) as e:
-            raise ValueError(f"Path resolution failed: {e}")
+                return base_str + '/' + normalized
 
     def _enqueue_preview(self, absolute_path: Path | str) -> None:
         self._task_counter += 1
