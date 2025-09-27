@@ -862,7 +862,7 @@ class AssetRepository:
             return {}
         try:
             data = json.loads(payload)
-        except json.JSONDecodeError:
+        except (RecursionError, json.JSONDecodeError):
             return {}
         if isinstance(data, dict):
             return dict(data)

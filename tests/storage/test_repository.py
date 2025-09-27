@@ -342,3 +342,24 @@ def test_asset_service_customization_helpers(tmp_path: Path) -> None:
     assert service.get_customization(customization.id) is None
     assert service.list_derivatives_for_asset(base_asset.path) == []
     assert service.get_base_for_derivative(derivative_asset.path) is None
+
+
+def test_repository_recovers_from_recursive_metadata(tmp_path: Path) -> None:
+    """Ensure malformed metadata that triggers recursion is treated as empty."""
+
+    storage = SQLiteStorage(tmp_path / "assets.sqlite3")
+    repository = AssetRepository(storage)
+
+    asset = repository.create_asset("assets/models/ship.fbx", label="Base ship")
+
+    # Craft JSON that exceeds the recursion depth limit when decoding.
+    deep_payload = "[" * 2048 + "0" + "]" * 2048
+    with storage.connect() as connection:
+        connection.execute(
+            "UPDATE assets SET metadata = ? WHERE id = ?",
+            (deep_payload, asset.id),
+        )
+
+    fetched = repository.get_asset(asset.id)
+    assert fetched is not None
+    assert fetched.metadata == {}
