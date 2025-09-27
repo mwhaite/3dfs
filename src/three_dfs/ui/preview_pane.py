@@ -412,8 +412,13 @@ class PreviewPane(QWidget):
 
         # FUNDAMENTAL FIX: Validate path at the very entry point
         if not self._is_safe_path_string(path):
-            logger.error("Rejecting unsafe path string: %r", path[:200] if len(path) > 200 else path)
-            self._show_message(f"Invalid path detected: {path[:100]}...")
+            # CRITICAL: Don't log the corrupted path directly as it causes recursion
+            try:
+                safe_sample = repr(path[:100]) if len(path) > 100 else repr(path)
+                print(f"REJECTING UNSAFE PATH: len={len(path)}, sample={safe_sample}", flush=True)
+            except Exception:
+                print(f"REJECTING UNSAFE PATH: len={len(path)}, repr failed", flush=True)
+            self._show_message("Invalid path detected - cannot display")
             return
 
         self._asset_record = asset_record

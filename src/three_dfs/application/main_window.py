@@ -273,12 +273,12 @@ class MainWindow(QMainWindow):
             
             # FUNDAMENTAL FIX: Validate asset paths before adding to UI
             if not self._is_safe_path_string(asset.path):
-                logger.error("CORRUPTED PATH DETECTED: asset_id=%s, path_repr=%r, path_len=%d", 
-                           asset.id, asset.path, len(asset.path))
-                # Try to understand what's in the path
-                if len(asset.path) > 1000:
-                    logger.error("Path sample (first 500 chars): %r", asset.path[:500])
-                    logger.error("Path sample (last 500 chars): %r", asset.path[-500:])
+                # CRITICAL: Don't log the corrupted path directly as it causes recursion
+                try:
+                    safe_sample = repr(asset.path[:100]) if len(asset.path) > 100 else repr(asset.path)
+                    print(f"CORRUPTED ASSET PATH: id={asset.id}, len={len(asset.path)}, sample={safe_sample}", flush=True)
+                except Exception:
+                    print(f"CORRUPTED ASSET PATH: id={asset.id}, len={len(asset.path)}, repr failed", flush=True)
                 continue
                 
             display_label = asset.label or asset.path
@@ -600,10 +600,12 @@ class MainWindow(QMainWindow):
         
         # FUNDAMENTAL FIX: Validate path data at the source
         if not self._is_safe_path_string(item_id):
-            logger.error("CORRUPTED PATH IN SELECTION: item_id=%r, len=%d", item_id, len(item_id))
-            if len(item_id) > 1000:
-                logger.error("Selection path sample (first 500): %r", item_id[:500])
-                logger.error("Selection path sample (last 500): %r", item_id[-500:])
+            # CRITICAL: Don't log the corrupted path directly as it causes recursion in logging
+            try:
+                safe_sample = repr(item_id[:100]) if len(item_id) > 100 else repr(item_id)
+                print(f"CORRUPTED PATH DETECTED: len={len(item_id)}, sample={safe_sample}", flush=True)
+            except Exception:
+                print(f"CORRUPTED PATH DETECTED: len={len(item_id)}, repr failed", flush=True)
             self._preview_pane.clear()
             self._tag_sidebar.set_active_item(None)
             self.statusBar().showMessage("Invalid path data detected - skipping selection", 5000)

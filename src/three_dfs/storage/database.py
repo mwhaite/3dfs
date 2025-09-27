@@ -157,10 +157,12 @@ class SQLiteStorage:
             if hasattr(result, 'keys') and 'path' in result.keys():
                 path_value = result['path']
                 if isinstance(path_value, str) and len(path_value) > 1000:
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error("SUSPICIOUS PATH FROM DATABASE: len=%d, sample=%r", 
-                               len(path_value), path_value[:200])
+                    # CRITICAL: Don't log the corrupted path directly as it causes recursion
+                    try:
+                        safe_sample = repr(path_value[:100])
+                        print(f"SUSPICIOUS PATH FROM DATABASE: len={len(path_value)}, sample={safe_sample}", flush=True)
+                    except Exception:
+                        print(f"SUSPICIOUS PATH FROM DATABASE: len={len(path_value)}, repr failed", flush=True)
             return result
         
         connection.row_factory = debug_row_factory
