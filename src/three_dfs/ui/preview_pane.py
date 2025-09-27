@@ -6,6 +6,7 @@ import html
 import io
 import logging
 import mimetypes
+import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -201,7 +202,7 @@ class PreviewPane(QWidget):
         self._current_task_id: int | None = None
         self._task_counter = 0
         self._current_raw_path: str | None = None
-        self._current_absolute_path: Path | None = None
+        self._current_absolute_path: str | None = None
         self._current_pixmap: QPixmap | None = None
         self._current_thumbnail_message: str | None = None
         self._asset_metadata: dict[str, Any] = {}
@@ -417,7 +418,8 @@ class PreviewPane(QWidget):
         absolute_path = self._resolve_path(path)
         self._current_absolute_path = absolute_path
 
-        display_label = label or absolute_path.name
+        path_obj = Path(absolute_path)
+        display_label = label or path_obj.name
         self._title_label.setText(display_label)
         self._path_label.setText(path)
 
@@ -448,11 +450,11 @@ class PreviewPane(QWidget):
         self._tabs.setTabEnabled(self._text_tab_index, False)
 
         # Prepare viewer tab
-        suffix = absolute_path.suffix.lower()
+        suffix = path_obj.suffix.lower()
         self._tabs.setTabToolTip(self._viewer_tab_index, "")
         if suffix in _MODEL_EXTENSIONS:
             try:
-                self._viewer.set_path(absolute_path)
+                self._viewer.set_path(path_obj)
                 self._tabs.setTabEnabled(self._viewer_tab_index, True)
                 self._tabs.setTabToolTip(
                     self._viewer_tab_index,
@@ -475,7 +477,7 @@ class PreviewPane(QWidget):
             )
 
         # Load README tab from the asset's folder if present
-        if self._load_readme_for(absolute_path):
+        if self._load_readme_for(path_obj):
             self._tabs.setTabEnabled(self._readme_tab_index, True)
         else:
             self._tabs.setTabEnabled(self._readme_tab_index, False)
@@ -489,8 +491,8 @@ class PreviewPane(QWidget):
         self._tabs.setTabToolTip(self._text_tab_index, "")
 
         self._show_message(f"Loading preview for {display_label}…")
-        self._enqueue_preview(absolute_path)
-        self._prepare_customizer(absolute_path)
+        self._enqueue_preview(path_obj)
+        self._prepare_customizer(path_obj)
 
     def _load_readme_for(self, path: Path) -> bool:
         base_dir = path if path.is_dir() else path.parent
@@ -555,13 +557,14 @@ class PreviewPane(QWidget):
             return
         label = self._title_label.text() or "item"
         self._show_message(f"Loading preview for {label}…")
-        self._enqueue_preview(self._current_absolute_path)
+        self._enqueue_preview(Path(self._current_absolute_path))
 
-    def _resolve_path(self, raw_path: str) -> Path:
-        candidate = Path(raw_path)
-        if not candidate.is_absolute():
-            candidate = (self._base_path / candidate).resolve()
-        return candidate
+    def _resolve_path(self, raw_path: str) -> str:
+        if not os.path.isabs(raw_path):
+            candidate = os.path.join(str(self._base_path), raw_path)
+        else:
+            candidate = raw_path
+        return os.path.realpath(candidate)
 
     def _enqueue_preview(self, absolute_path: Path) -> None:
         self._task_counter += 1
@@ -1000,7 +1003,7 @@ class PreviewPane(QWidget):
                 self._asset_metadata = dict(refreshed.metadata)
 
         if self._current_absolute_path is not None:
-            self._prepare_customizer(self._current_absolute_path)
+            self._prepare_customizer(Path(self._current_absolute_path))
 
         self.customizationGenerated.emit(pipeline_result)
 
@@ -1023,7 +1026,7 @@ class PreviewPane(QWidget):
 
         if (
             self._current_absolute_path is None
-            or outcome.path != self._current_absolute_path
+            or str(outcome.path) != self._current_absolute_path
         ):
             return
 
@@ -1095,7 +1098,7 @@ class PreviewPane(QWidget):
             metadata_entries.append(("Text Preview", self._text_unavailable_message))
         self._populate_metadata(metadata_entries)
         if self._current_absolute_path is not None:
-            self._prepare_customizer(self._current_absolute_path)
+            self._prepare_customizer(Path(self._current_absolute_path))
 
     def _configure_text_preview(self, outcome: PreviewOutcome) -> None:
         if outcome.text_content is None:
