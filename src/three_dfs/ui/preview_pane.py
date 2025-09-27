@@ -415,19 +415,38 @@ class PreviewPane(QWidget):
         if not self._asset_metadata and asset_record is not None:
             self._asset_metadata = dict(asset_record.metadata)
         self._current_raw_path = path
-        absolute_path = self._resolve_path(path)
-        self._current_absolute_path = absolute_path
+        
+        # Safely resolve the path with comprehensive error handling
+        try:
+            absolute_path = self._resolve_path(path)
+            self._current_absolute_path = absolute_path
+        except (ValueError, RecursionError, OSError) as e:
+            logger.error("Failed to resolve path %s: %s", path, e)
+            self._show_message(f"Unable to resolve path: {path}\nError: {e}")
+            return
 
+        # Safely create Path object with fallback
+        path_obj = None
+        display_label = label or path
+        suffix = ""
+        
         try:
             path_obj = Path(absolute_path)
             display_label = label or path_obj.name
             suffix = path_obj.suffix.lower()
-        except (RecursionError, AttributeError, OSError):
-            # Handle corrupted path objects or filesystem issues
-            display_label = label or absolute_path.split('/')[-1] if '/' in absolute_path else absolute_path
-            suffix = ""
-            if '.' in display_label:
-                suffix = display_label.split('.')[-1].lower()
+        except (RecursionError, AttributeError, OSError, ValueError) as e:
+            logger.warning("Failed to create Path object for %s: %s", absolute_path, e)
+            # Extract filename and extension manually as fallback
+            if '/' in absolute_path:
+                filename = absolute_path.split('/')[-1]
+            elif '\\' in absolute_path:
+                filename = absolute_path.split('\\')[-1]
+            else:
+                filename = absolute_path
+            
+            display_label = label or filename
+            if '.' in filename:
+                suffix = '.' + filename.split('.')[-1].lower()
             path_obj = None
         
         self._title_label.setText(display_label)
@@ -499,12 +518,18 @@ class PreviewPane(QWidget):
             self._text_unavailable_message = None
         self._tabs.setTabToolTip(self._text_tab_index, "")
 
+        self._show_message(f"Loading preview for {display_label}…")
         if path_obj is not None:
-            self._show_message(f"Loading preview for {display_label}…")
             self._enqueue_preview(path_obj)
             self._prepare_customizer(path_obj)
         else:
-            self._show_message(f"Unable to load preview for {display_label} - path resolution failed")
+            # Use string path as fallback
+            self._enqueue_preview(absolute_path)
+            try:
+                fallback_path = Path(absolute_path)
+                self._prepare_customizer(fallback_path)
+            except (RecursionError, ValueError, OSError):
+                logger.warning("Could not prepare customizer for path: %s", absolute_path)
 
     def _load_readme_for(self, path: Path) -> bool:
         try:
@@ -575,17 +600,38 @@ class PreviewPane(QWidget):
         self._enqueue_preview(Path(self._current_absolute_path))
 
     def _resolve_path(self, raw_path: str) -> str:
-        if not os.path.isabs(raw_path):
-            candidate = os.path.join(str(self._base_path), raw_path)
-        else:
-            candidate = raw_path
+        # Validate and sanitize the input path first
+        if not raw_path or not isinstance(raw_path, str):
+            raise ValueError("Invalid path: empty or non-string")
+        
+        # Check for obvious circular references or malformed paths
+        if len(raw_path) > 4096:  # Reasonable path length limit
+            raise ValueError("Path too long, possible circular reference")
+        
+        # Check for repeated patterns that might indicate circular references
+        if '..' in raw_path:
+            parts = raw_path.split('/')
+            if len(parts) > 100:  # Too many path components
+                raise ValueError("Path has too many components, possible circular reference")
+        
         try:
-            return os.path.realpath(candidate)
-        except RecursionError:
-            # Fallback to abspath if realpath hits recursion
-            return os.path.abspath(candidate)
+            if not os.path.isabs(raw_path):
+                candidate = os.path.join(str(self._base_path), raw_path)
+            else:
+                candidate = raw_path
+            
+            # Use abspath instead of realpath to avoid symlink resolution issues
+            resolved = os.path.abspath(candidate)
+            
+            # Final validation - ensure the resolved path is reasonable
+            if len(resolved) > 4096:
+                raise ValueError("Resolved path too long")
+                
+            return resolved
+        except (RecursionError, OSError) as e:
+            raise ValueError(f"Path resolution failed: {e}")
 
-    def _enqueue_preview(self, absolute_path: Path) -> None:
+    def _enqueue_preview(self, absolute_path: Path | str) -> None:
         self._task_counter += 1
         task_id = self._task_counter
         self._current_task_id = task_id
@@ -595,9 +641,20 @@ class PreviewPane(QWidget):
             cache = ThumbnailCache()
             self._thumbnail_cache = cache
 
+        # Convert string path to Path object safely
+        if isinstance(absolute_path, str):
+            try:
+                path_obj = Path(absolute_path)
+            except (RecursionError, ValueError, OSError) as e:
+                logger.error("Failed to create Path object in _enqueue_preview: %s", e)
+                self._show_message(f"Unable to process path: {absolute_path}")
+                return
+        else:
+            path_obj = absolute_path
+
         worker = PreviewWorker(
             task_id,
-            absolute_path,
+            path_obj,
             asset_metadata=self._asset_metadata,
             asset_service=self._asset_service,
             asset_record=self._asset_record,
@@ -613,27 +670,32 @@ class PreviewPane(QWidget):
     def _prepare_customizer(self, absolute_path: Path) -> None:
         self._tabs.setTabEnabled(self._customizer_tab_index, False)
         self._customizer_panel.clear()
-        context = self._build_customizer_context(absolute_path)
-        self._customizer_context = context
+        
+        try:
+            context = self._build_customizer_context(absolute_path)
+            self._customizer_context = context
 
-        if context is not None:
-            try:
-                self._customizer_panel.set_session(
-                    backend=context.backend,
-                    schema=context.schema,
-                    source_path=context.source_path,
-                    base_asset=context.base_asset,
-                    values=context.values,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to initialise customizer for %s", absolute_path
-                )
-                self._customizer_context = None
-            else:
-                self._tabs.setTabEnabled(self._customizer_tab_index, True)
+            if context is not None:
+                try:
+                    self._customizer_panel.set_session(
+                        backend=context.backend,
+                        schema=context.schema,
+                        source_path=context.source_path,
+                        base_asset=context.base_asset,
+                        values=context.values,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to initialise customizer for %s", absolute_path
+                    )
+                    self._customizer_context = None
+                else:
+                    self._tabs.setTabEnabled(self._customizer_tab_index, True)
 
-        self._refresh_customization_summary(absolute_path)
+            self._refresh_customization_summary(absolute_path)
+        except (RecursionError, ValueError, OSError) as e:
+            logger.error("Failed to prepare customizer due to path issues: %s", e)
+            self._customizer_context = None
 
     def _build_customizer_context(
         self, absolute_path: Path
