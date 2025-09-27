@@ -425,27 +425,37 @@ class PreviewPane(QWidget):
             self._show_message(f"Unable to resolve path: {path}\nError: {e}")
             return
 
-        # Safely create Path object with fallback
+        # Safely create Path object with comprehensive validation
         path_obj = None
         display_label = label or path
         suffix = ""
         
+        # First validate the absolute_path string before any Path operations
         try:
+            # Additional string-level validation
+            if len(absolute_path) > 4096:
+                raise ValueError("Path too long")
+            
+            # Check for null bytes or other problematic characters
+            if '\x00' in absolute_path:
+                raise ValueError("Path contains null bytes")
+            
+            # Try to create Path object with timeout protection
             path_obj = Path(absolute_path)
+            
+            # Test basic operations that might trigger recursion
+            _ = str(path_obj)  # This might trigger recursion
             display_label = label or path_obj.name
             suffix = path_obj.suffix.lower()
+            
         except (RecursionError, AttributeError, OSError, ValueError) as e:
             logger.warning("Failed to create Path object for %s: %s", absolute_path, e)
             # Extract filename and extension manually as fallback
-            if '/' in absolute_path:
-                filename = absolute_path.split('/')[-1]
-            elif '\\' in absolute_path:
-                filename = absolute_path.split('\\')[-1]
-            else:
-                filename = absolute_path
+            path_parts = absolute_path.replace('\\', '/').split('/')
+            filename = path_parts[-1] if path_parts else absolute_path
             
             display_label = label or filename
-            if '.' in filename:
+            if '.' in filename and not filename.startswith('.'):
                 suffix = '.' + filename.split('.')[-1].lower()
             path_obj = None
         
@@ -608,26 +618,87 @@ class PreviewPane(QWidget):
         if len(raw_path) > 4096:  # Reasonable path length limit
             raise ValueError("Path too long, possible circular reference")
         
-        # Check for repeated patterns that might indicate circular references
-        if '..' in raw_path:
-            parts = raw_path.split('/')
+        # Detect circular patterns in the path string itself
+        normalized = raw_path.replace('\\', '/')
+        
+        # Check for excessive repetition of path separators or components
+        if '//' in normalized or '///' in normalized:
+            # Clean up multiple slashes but check for excessive patterns
+            cleaned = normalized
+            while '//' in cleaned:
+                cleaned = cleaned.replace('//', '/')
+            if len(cleaned) != len(normalized) and len(normalized) > 1000:
+                raise ValueError("Path contains excessive repeated separators")
+            normalized = cleaned
+        
+        # Check for circular .. patterns
+        if '..' in normalized:
+            parts = normalized.split('/')
             if len(parts) > 100:  # Too many path components
                 raise ValueError("Path has too many components, possible circular reference")
+            
+            # Check for patterns like ../../../../../../ repeated excessively
+            dotdot_count = sum(1 for part in parts if part == '..')
+            if dotdot_count > 50:  # Reasonable limit for parent directory traversal
+                raise ValueError("Excessive parent directory traversal, possible circular reference")
         
+        # Check for other suspicious patterns
+        suspicious_patterns = ['/./', '/../', '/.//', '/..//']
+        for pattern in suspicious_patterns:
+            if pattern in normalized and normalized.count(pattern) > 20:
+                raise ValueError(f"Suspicious repeated pattern detected: {pattern}")
+        
+        # Additional check: if the path contains the same directory name repeated many times
+        parts = [p for p in normalized.split('/') if p and p != '.' and p != '..']
+        if parts:
+            from collections import Counter
+            part_counts = Counter(parts)
+            max_count = max(part_counts.values()) if part_counts else 0
+            if max_count > 20:  # Same directory name repeated too many times
+                raise ValueError("Path contains excessively repeated directory names")
+        
+        # Now try to resolve the path safely
         try:
-            if not os.path.isabs(raw_path):
-                candidate = os.path.join(str(self._base_path), raw_path)
+            if not normalized.startswith('/'):  # Not absolute
+                base_str = str(self._base_path)
+                # Manually join to avoid os.path.join issues with corrupted paths
+                if base_str.endswith('/'):
+                    candidate = base_str + normalized
+                else:
+                    candidate = base_str + '/' + normalized
             else:
-                candidate = raw_path
+                candidate = normalized
             
-            # Use abspath instead of realpath to avoid symlink resolution issues
-            resolved = os.path.abspath(candidate)
+            # Manually normalize the path instead of using os.path functions
+            # Split into parts and resolve . and .. manually
+            parts = candidate.split('/')
+            resolved_parts = []
             
-            # Final validation - ensure the resolved path is reasonable
+            for part in parts:
+                if part == '' or part == '.':
+                    continue
+                elif part == '..':
+                    if resolved_parts:
+                        resolved_parts.pop()
+                else:
+                    resolved_parts.append(part)
+            
+            # Reconstruct the path
+            if candidate.startswith('/'):
+                resolved = '/' + '/'.join(resolved_parts)
+            else:
+                resolved = '/'.join(resolved_parts)
+            
+            # Final validation
             if len(resolved) > 4096:
                 raise ValueError("Resolved path too long")
+            
+            # Ensure we don't have any remaining suspicious patterns
+            if resolved.count('..') > 10 or resolved.count('./') > 10:
+                raise ValueError("Resolved path still contains suspicious patterns")
                 
             return resolved
+            
         except (RecursionError, OSError) as e:
             raise ValueError(f"Path resolution failed: {e}")
 
