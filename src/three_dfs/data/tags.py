@@ -50,12 +50,23 @@ class TagStore:
         item_key = self._normalize_item_id(item_id)
         return self._service.tags_for_path(item_key)
 
+    def tags_for_asset(self, asset_id: int) -> list[str]:
+        """Return the tags assigned to the asset identified by *asset_id*."""
+
+        return self._service.tags_for_asset(asset_id)
+
     def set_tags(self, item_id: str, tags: Iterable[str]) -> list[str]:
         """Replace the tags for *item_id* with *tags*."""
 
         item_key = self._normalize_item_id(item_id)
         normalized = self._normalize_tag_iterable(tags)
         return self._service.set_tags(item_key, normalized)
+
+    def set_tags_for_asset(
+        self, asset_id: int, tags: Iterable[str]
+    ) -> list[str]:
+        normalized = self._normalize_tag_iterable(tags)
+        return self._repository.set_tags(asset_id, normalized)
 
     def add_tag(self, item_id: str, tag: str) -> str | None:
         """Add *tag* to *item_id* and return the normalized value."""
@@ -64,12 +75,20 @@ class TagStore:
         normalized = self._normalize_tag(tag)
         return self._service.add_tag(item_key, normalized)
 
+    def add_tag_to_asset(self, asset_id: int, tag: str) -> str | None:
+        normalized = self._normalize_tag(tag)
+        return self._repository.add_tag(asset_id, normalized)
+
     def remove_tag(self, item_id: str, tag: str) -> bool:
         """Remove *tag* from *item_id* if present."""
 
         item_key = self._normalize_item_id(item_id)
         normalized = self._normalize_tag(tag)
         return self._service.remove_tag(item_key, normalized)
+
+    def remove_tag_from_asset(self, asset_id: int, tag: str) -> bool:
+        normalized = self._normalize_tag(tag)
+        return self._repository.remove_tag(asset_id, normalized)
 
     def rename_tag(self, item_id: str, old_tag: str, new_tag: str) -> str | None:
         """Rename *old_tag* to *new_tag* for *item_id*."""
@@ -78,6 +97,13 @@ class TagStore:
         old_normalized = self._normalize_tag(old_tag)
         new_normalized = self._normalize_tag(new_tag)
         return self._service.rename_tag(item_key, old_normalized, new_normalized)
+
+    def rename_tag_for_asset(
+        self, asset_id: int, old_tag: str, new_tag: str
+    ) -> str | None:
+        old_normalized = self._normalize_tag(old_tag)
+        new_normalized = self._normalize_tag(new_tag)
+        return self._repository.rename_tag(asset_id, old_normalized, new_normalized)
 
     def search(self, query: str) -> dict[str, list[str]]:
         """Return all tags whose text contains *query* (case-insensitive)."""
@@ -98,7 +124,10 @@ class TagStore:
     # Internal helpers
     # ------------------------------------------------------------------
     def _normalize_item_id(self, item_id: str) -> str:
-        value = str(item_id)
+        try:
+            value = str(item_id)
+        except RecursionError as exc:
+            raise ValueError("Invalid item identifier") from exc
         if not value:
             raise ValueError("Item identifier cannot be empty.")
         return value

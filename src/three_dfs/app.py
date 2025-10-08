@@ -7,7 +7,7 @@ from typing import Final
 
 from PySide6.QtWidgets import QApplication
 
-from .application import MainWindow
+from .application.main_window import MainWindow
 
 WINDOW_TITLE: Final[str] = "3dfs"
 """Default title applied to the main Qt window."""

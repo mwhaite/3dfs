@@ -77,3 +77,4 @@ venv.bak/
 # Others
 *.swp
 
+.aider*

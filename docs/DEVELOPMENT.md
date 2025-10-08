@@ -39,3 +39,4 @@
 - Hatch issues: recreate env `bash setup.sh --recreate`.
 - Lint failures: run the "Fix style" command above.
 - Failing tests: run selectively, e.g., `pytest tests/storage/test_repository.py -q`.
+- Resetting the catalog: run `scripts/reset_assets_db.py --dry-run` to preview files, then re-run without `--dry-run` (optionally add `--yes`) to wipe the SQLite database under `~/.3dfs/`.

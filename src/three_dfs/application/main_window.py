@@ -24,12 +24,13 @@ from PySide6.QtWidgets import (
 
 from ..config import configure, get_config
 from ..customizer.pipeline import PipelineResult
-from ..data import TagStore
 from ..importer import SUPPORTED_EXTENSIONS
 from ..project import build_attachment_metadata
 from ..search import LibrarySearch
 from ..storage import AssetService
-from ..ui import PreviewPane, ProjectPane, SettingsDialog, TagSidebar
+from ..ui.preview_pane import PreviewPane
+from ..ui.project_pane import ProjectPane
+from ..ui.settings_dialog import SettingsDialog
 from .project_scanner import (
     ProjectRefreshRequest,
     ProjectScanOutcome,
@@ -74,10 +75,6 @@ class MainWindow(QMainWindow):
 
         self._asset_service = AssetService()
         self._library_search = LibrarySearch(service=self._asset_service)
-        self._tag_store = TagStore(service=self._asset_service)
-        self._tag_sidebar = TagSidebar(
-            self._tag_store, asset_service=self._asset_service
-        )
         self._repository_list = QListWidget(self)
         self._repository_list.setObjectName("repositoryList")
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -133,11 +130,12 @@ class MainWindow(QMainWindow):
         self._project_pending: dict[str, int] = {}
         self._project_refresh_requests: dict[str, ProjectRefreshRequest] = {}
 
+        self._current_asset = None
+
         self._build_layout()
         self._connect_signals()
         self._build_menu()
         self._populate_repository()
-        self._current_asset = None
         # If nothing is persisted yet, attempt an initial rescan to discover
         # assets already present in the configured library directory.
         if self._repository_list.count() == 0:
@@ -148,54 +146,16 @@ class MainWindow(QMainWindow):
     def _is_safe_path_string(self, path_str: str) -> bool:
         """Validate that a path string is safe before any Path operations."""
         try:
-            # Basic type and length checks
             if not isinstance(path_str, str):
                 return False
-            if len(path_str) > 4096:
+            value = path_str.strip()
+            if not value:
                 return False
-            if not path_str.strip():
+            if len(value) > 4096:
                 return False
-            
-            # Check for null bytes and other problematic characters
-            if '\x00' in path_str or '\r' in path_str:
+            if '\x00' in value or '\r' in value:
                 return False
-            
-            # Check for excessive repetition that might indicate circular references
-            normalized = path_str.replace('\\', '/')
-            
-            # Count path separators - too many might indicate a problem
-            if normalized.count('/') > 100:
-                return False
-            
-            # Check for repeated patterns that suggest circular references
-            if '..' in normalized:
-                dotdot_count = normalized.count('..')
-                if dotdot_count > 50:
-                    return False
-            
-            # Check for excessive repetition of the same substring
-            if len(normalized) > 500:
-                # Look for repeated substrings that might indicate circular references
-                for length in [10, 20, 50]:
-                    if len(normalized) > length * 10:
-                        for i in range(len(normalized) - length):
-                            substr = normalized[i:i+length]
-                            if normalized.count(substr) > 10:
-                                return False
-            
-            # Try a basic Path operation to see if it causes recursion
-            # Use a timeout-like approach by limiting the string length we test
-            test_str = normalized[:1000]  # Limit test to reasonable length
-            try:
-                # This is the critical test - if this causes recursion, reject the path
-                from pathlib import Path
-                test_path = Path(test_str)
-                _ = str(test_path)  # Force evaluation
-                _ = test_path.parts  # Test parts access
-                return True
-            except (RecursionError, ValueError, OSError):
-                return False
-                
+            return True
         except Exception:
             return False
 
@@ -241,22 +201,27 @@ class MainWindow(QMainWindow):
         self._detail_stack.addWidget(self._project_pane)  # index 1
 
         splitter.addWidget(self._detail_stack)
-        splitter.addWidget(self._tag_sidebar)
         splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 4)
-        splitter.setStretchFactor(2, 1)
+        splitter.setStretchFactor(1, 5)
 
         layout.addWidget(splitter)
         self.setCentralWidget(central_widget)
 
     def _connect_signals(self) -> None:
         self._repository_list.currentItemChanged.connect(self._handle_selection_change)
-        self._tag_sidebar.searchRequested.connect(self._handle_search_request)
-        self._tag_sidebar.tagsChanged.connect(self._handle_tags_changed)
-        self._tag_sidebar.derivativeActivated.connect(self._handle_preview_navigation)
 
     def _populate_repository(self) -> None:
         """Populate the repository view with persisted asset entries."""
+
+        config = get_config()
+        library_root = config.library_root
+        try:
+            pruned = self._asset_service.prune_missing_assets(
+                base_path=library_root
+            )
+        except Exception:  # noqa: BLE001 - pruning should not block UI
+            logger.exception("Failed to prune missing assets")
+            pruned = 0
 
         self._repository_list.clear()
         # By default show only persisted assets; opt-in demo seeding via settings.
@@ -283,7 +248,8 @@ class MainWindow(QMainWindow):
                 
             display_label = asset.label or asset.path
             item = QListWidgetItem(display_label)
-            item.setData(Qt.UserRole, asset.path)
+            item.setData(Qt.UserRole, asset.id)
+            item.setData(Qt.UserRole + 1, asset.path)
             item.setToolTip(asset.path)
             self._repository_list.addItem(item)
             valid_assets += 1
@@ -292,11 +258,22 @@ class MainWindow(QMainWindow):
             self._repository_list.setCurrentRow(0)
         else:
             # Surface the current library root to help users locate files.
-            self.statusBar().showMessage(f"Library: {get_config().library_root}", 5000)
+            self.statusBar().showMessage(f"Library: {library_root}", 5000)
         
+        status_bits: list[str] = []
+        if pruned:
+            plural = "s" if pruned != 1 else ""
+            status_bits.append(f"removed {pruned} missing asset{plural}")
         if valid_assets < len(assets):
             skipped = len(assets) - valid_assets
-            self.statusBar().showMessage(f"Loaded {valid_assets} assets, skipped {skipped} with invalid paths", 3000)
+            plural = "s" if skipped != 1 else ""
+            status_bits.append(f"skipped {skipped} invalid path{plural}")
+
+        if status_bits:
+            self.statusBar().showMessage(
+                f"Loaded {valid_assets} assets; {'; '.join(status_bits)}",
+                3000,
+            )
 
     # ------------------------------------------------------------------
     # Menu & actions
@@ -453,7 +430,8 @@ class MainWindow(QMainWindow):
         if action == open_project_act:
             target = None
             if item is not None:
-                target = str(item.data(Qt.UserRole) or item.text())
+                raw_path = item.data(Qt.UserRole + 1) or item.text()
+                target = str(raw_path) if raw_path is not None else ""
             if target:
                 p = Path(target).expanduser()
                 folder = p if p.is_dir() else p.parent
@@ -476,8 +454,11 @@ class MainWindow(QMainWindow):
                 )
                 for row in range(self._repository_list.count()):
                     candidate = self._repository_list.item(row)
-                    candidate_path = str(
-                        candidate.data(Qt.UserRole) or candidate.text()
+                    candidate_raw = (
+                        candidate.data(Qt.UserRole + 1) or candidate.text()
+                    )
+                    candidate_path = (
+                        str(candidate_raw) if candidate_raw is not None else ""
                     )
                     if candidate_path == str(folder):
                         self._repository_list.setCurrentItem(candidate)
@@ -485,7 +466,8 @@ class MainWindow(QMainWindow):
         elif action == open_folder_act:
             target = None
             if item is not None:
-                target = str(item.data(Qt.UserRole) or item.text())
+                raw_path = item.data(Qt.UserRole + 1) or item.text()
+                target = str(raw_path) if raw_path is not None else ""
             if target:
                 self._open_item_folder(target)
 
@@ -588,30 +570,55 @@ class MainWindow(QMainWindow):
 
         if current is None:
             self._preview_pane.clear()
-            self._tag_sidebar.set_active_item(None)
             return
 
-        item_id = current.data(Qt.UserRole) or current.text()
-        item_id = str(item_id)
-        
-        # DEBUG: Log selection details
-        logger.debug("Selection change: item_id=%r, item_id_type=%s, item_id_len=%d", 
-                    item_id, type(item_id), len(item_id))
-        
-        # FUNDAMENTAL FIX: Validate path data at the source
-        if not self._is_safe_path_string(item_id):
-            # CRITICAL: Don't log the corrupted path directly as it causes recursion in logging
-            try:
-                safe_sample = repr(item_id[:100]) if len(item_id) > 100 else repr(item_id)
-                print(f"CORRUPTED PATH DETECTED: len={len(item_id)}, sample={safe_sample}", flush=True)
-            except Exception:
-                print(f"CORRUPTED PATH DETECTED: len={len(item_id)}, repr failed", flush=True)
+        asset_id_data = current.data(Qt.UserRole)
+        asset_path_data = current.data(Qt.UserRole + 1)
+
+        asset_id: int | None
+        try:
+            asset_id = int(asset_id_data) if asset_id_data is not None else None
+        except (TypeError, ValueError):
+            asset_id = None
+
+        asset_path = str(asset_path_data or current.text() or "").strip()
+
+        if asset_id is None and not asset_path:
             self._preview_pane.clear()
-            self._tag_sidebar.set_active_item(None)
-            self.statusBar().showMessage("Invalid path data detected - skipping selection", 5000)
             return
-        
-        asset = self._asset_service.get_asset_by_path(item_id)
+
+        if asset_path and not self._is_safe_path_string(asset_path):
+            try:
+                safe_sample = (
+                    repr(asset_path[:100])
+                    if len(asset_path) > 100
+                    else repr(asset_path)
+                )
+                print(
+                    f"CORRUPTED PATH DETECTED: len={len(asset_path)}, sample={safe_sample}",
+                    flush=True,
+                )
+            except Exception:
+                print(
+                    "CORRUPTED PATH DETECTED: len=?, repr failed",
+                    flush=True,
+                )
+            self._preview_pane.clear()
+            self.statusBar().showMessage(
+                "Invalid path data detected - skipping selection", 5000
+            )
+            return
+
+        asset = None
+        if asset_id is not None:
+            try:
+                asset = self._asset_service.get_asset(asset_id)
+            except Exception:
+                asset = None
+        if asset is None and asset_path:
+            asset = self._asset_service.get_asset_by_path(asset_path)
+            if asset is not None:
+                asset_id = asset.id
 
         # Project detection: assets with kind == 'project' in metadata
         if (
@@ -623,7 +630,7 @@ class MainWindow(QMainWindow):
             return
 
         # Unify: if selection is a file, show its folder as project context
-        target_path = asset.path if asset is not None else item_id
+        target_path = asset.path if asset is not None else asset_path
         try:
             target = Path(str(target_path)).expanduser()
         except Exception:
@@ -639,7 +646,6 @@ class MainWindow(QMainWindow):
                     str(target), label=current.text(), metadata=None, asset_record=asset
                 )
                 self._detail_stack.setCurrentWidget(self._preview_pane)
-                self._tag_sidebar.set_active_item(str(target))
                 self._current_asset = asset
                 return
 
@@ -652,7 +658,8 @@ class MainWindow(QMainWindow):
             )
             for row in range(self._repository_list.count()):
                 it = self._repository_list.item(row)
-                if str(it.data(Qt.UserRole) or it.text()) == str(parent):
+                raw_path = it.data(Qt.UserRole + 1) or it.text()
+                if str(raw_path) == str(parent):
                     self._repository_list.setCurrentItem(it)
                     break
             parent_asset = self._asset_service.get_asset_by_path(str(parent))
@@ -668,7 +675,7 @@ class MainWindow(QMainWindow):
         # Default: preview pane
         if asset is None:
             self._preview_pane.set_item(
-                item_id,
+                asset_path,
                 label=current.text(),
                 metadata=None,
                 asset_record=None,
@@ -684,7 +691,6 @@ class MainWindow(QMainWindow):
             self._current_asset = asset
 
         self._detail_stack.setCurrentWidget(self._preview_pane)
-        self._tag_sidebar.set_active_item(item_id)
         self._update_project_watchers()
 
     def _show_project(self, asset) -> None:
@@ -797,23 +803,8 @@ class MainWindow(QMainWindow):
             attachments=att_objs,
         )
         self._detail_stack.setCurrentWidget(self._project_pane)
-        self._tag_sidebar.set_active_item(asset.path)
         self._current_asset = asset
         self._update_project_watchers()
-
-    def _handle_search_request(self, query: str) -> None:
-        normalized = query.strip()
-        if normalized:
-            matches = self._tag_store.search(normalized)
-            self._tag_filter_matches = set(matches.keys())
-            self.statusBar().showMessage(f"Filtering by tag: {normalized}", 2000)
-        else:
-            self._tag_filter_matches = None
-            self.statusBar().showMessage("Cleared tag filter", 2000)
-        self._apply_repository_filters()
-        active_item = self._tag_sidebar.active_item()
-        if active_item:
-            self._tag_sidebar.set_active_item(active_item)
 
     def _apply_repository_filters(self) -> None:
         raw_text = (
@@ -823,25 +814,24 @@ class MainWindow(QMainWindow):
         )
         query = raw_text.strip()
         text_needle = query.casefold()
-        tag_matches = getattr(self, "_tag_filter_matches", None)
         search_paths = self._run_library_search(query) if query else None
 
         for row in range(self._repository_list.count()):
             item = self._repository_list.item(row)
-            path = str(item.data(Qt.UserRole) or item.text())
+            raw_path = item.data(Qt.UserRole + 1) or item.text()
+            path = str(raw_path) if raw_path is not None else ""
             label = item.text()
-            matches_tag = True if tag_matches is None else (path in tag_matches)
             if search_paths is None:
                 if not text_needle:
-                    matches_text = True
+                    visible = True
                 else:
                     label_case = (label or "").casefold()
-                    matches_text = (
+                    visible = (
                         text_needle in label_case or text_needle in path.casefold()
                     )
             else:
-                matches_text = path in search_paths
-            item.setHidden(not (matches_tag and matches_text))
+                visible = path in search_paths
+            item.setHidden(not visible)
 
     def _run_library_search(self, query: str) -> set[str] | None:
         """Return asset paths that match *query* using :mod:`three_dfs.search`."""
@@ -1237,7 +1227,8 @@ class MainWindow(QMainWindow):
         )
         for row in range(self._repository_list.count()):
             item = self._repository_list.item(row)
-            item_path = str(item.data(Qt.UserRole) or item.text())
+            raw_path = item.data(Qt.UserRole + 1) or item.text()
+            item_path = str(raw_path) if raw_path is not None else ""
             if item_path == str(folder):
                 self._repository_list.setCurrentItem(item)
                 break
@@ -1245,21 +1236,11 @@ class MainWindow(QMainWindow):
     def _select_repository_path(self, path: str) -> None:
         for row in range(self._repository_list.count()):
             item = self._repository_list.item(row)
-            data = str(item.data(Qt.UserRole) or item.text())
+            raw_path = item.data(Qt.UserRole + 1) or item.text()
+            data = str(raw_path) if raw_path is not None else ""
             if data == path:
                 self._repository_list.setCurrentItem(item)
                 break
-
-    def _handle_tags_changed(self, path: str, tags: list[str]) -> None:
-        del tags  # unused but present in signal signature
-        asset = self._asset_service.get_asset_by_path(path)
-        if asset is None:
-            return
-        if self._current_asset is not None and self._current_asset.id == asset.id:
-            self._current_asset = asset
-            self._update_project_watchers()
-        self._populate_repository()
-        self._select_repository_path(path)
 
     def _handle_preview_navigation(self, target: str) -> None:
         path = Path(target)
@@ -1278,7 +1259,6 @@ class MainWindow(QMainWindow):
                 asset_record=asset,
             )
             self._detail_stack.setCurrentWidget(self._preview_pane)
-            self._tag_sidebar.set_active_item(asset.path)
             self._current_asset = asset
             self._update_project_watchers()
 
@@ -1395,7 +1375,8 @@ class MainWindow(QMainWindow):
             ):
                 for row in range(self._repository_list.count()):
                     it = self._repository_list.item(row)
-                    if str(it.data(Qt.UserRole) or it.text()) == str(folder):
+                    raw_path = it.data(Qt.UserRole + 1) or it.text()
+                    if str(raw_path) == str(folder):
                         self._repository_list.setCurrentItem(it)
                         break
         except Exception:

@@ -182,6 +182,49 @@ def test_asset_service_bootstrap_demo_data(tmp_path: Path) -> None:
     assert tagged
 
 
+def test_asset_service_prunes_missing_assets(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "assets.sqlite3")
+    repository = AssetRepository(storage)
+    service = AssetService(repository)
+
+    existing = tmp_path / "models" / "ship.fbx"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("mesh-data")
+
+    present = service.create_asset(str(existing), label="Spaceship")
+    missing_absolute = service.create_asset(
+        str(tmp_path / "models" / "obsolete.fbx"),
+        label="Obsolete",
+    )
+    missing_relative = service.create_asset("relative/file.txt", label="Relative")
+
+    pruned = service.prune_missing_assets(base_path=tmp_path)
+
+    assert pruned == 2
+    assert service.get_asset_by_path(present.path) is not None
+    assert service.get_asset_by_path(missing_absolute.path) is None
+    assert service.get_asset_by_path(missing_relative.path) is None
+
+
+def test_repository_handles_recursing_path_strings(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "assets.sqlite3")
+    repository = AssetRepository(storage)
+
+    repository.create_asset("valid/asset.txt", label="Valid")
+
+    class BadPath:
+        def __str__(self) -> str:  # pragma: no cover - recursion guard
+            return str(self)
+
+    assert repository.get_asset_by_path(BadPath()) is None
+    assert repository.delete_asset_by_path(BadPath()) is False
+
+    service = AssetService(repository)
+    assert service.tags_for_path(BadPath()) == []
+    # Asset previously created remains retrievable via valid path
+    assert service.get_asset_by_path("valid/asset.txt") is not None
+
+
 def test_customization_crud_and_relationships(tmp_path: Path) -> None:
     storage = SQLiteStorage(tmp_path / "assets.sqlite3")
     repository = AssetRepository(storage)

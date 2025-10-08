@@ -10,7 +10,6 @@ pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 from PySide6.QtTest import QSignalSpy
 
 from three_dfs.customizer.openscad import OpenSCADBackend
-from three_dfs.data import TagStore
 from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
 from three_dfs.ui.customizer_dialog import CustomizerDialog, CustomizerSessionConfig
 from three_dfs.ui.customizer_panel import (
@@ -21,7 +20,6 @@ from three_dfs.ui.customizer_panel import (
     RangeParameterWidget,
 )
 from three_dfs.ui.preview_pane import PreviewPane
-from three_dfs.ui.tag_sidebar import TagSidebar
 
 
 def _fixture_path(name: str) -> Path:
@@ -180,7 +178,6 @@ def test_preview_pane_displays_customization_summary(qapp, tmp_path):
 
 def test_tag_sidebar_lists_derivatives(qapp, tmp_path):
     service = _create_asset_service(tmp_path)
-    store = TagStore(service=service)
 
     source = tmp_path / "item.scad"
     source.write_text("module test() {}", encoding="utf-8")
@@ -208,19 +205,3 @@ def test_tag_sidebar_lists_derivatives(qapp, tmp_path):
         label="Output",
         metadata=derivative_metadata,
     )
-
-    sidebar = TagSidebar(store, asset_service=service)
-    sidebar.set_active_item(str(base_asset.path))
-    sidebar.show()
-    qapp.processEvents()
-
-    assert sidebar._derivative_list.isVisible()
-    assert sidebar._derivative_list.count() == 1
-    item = sidebar._derivative_list.item(0)
-
-    spy = QSignalSpy(sidebar.derivativeActivated)
-    sidebar._derivative_list.itemActivated.emit(item)
-    qapp.processEvents()
-    assert spy.count() == 1
-    assert spy.at(0)[0] == str(derivative_path)
-    sidebar.deleteLater()

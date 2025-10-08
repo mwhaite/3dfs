@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..thumbnails import (
@@ -98,6 +99,11 @@ class AssetService:
 
         return self._repository.list_assets()
 
+    def get_asset(self, asset_id: int) -> AssetRecord | None:
+        """Fetch an asset by numeric identifier."""
+
+        return self._repository.get_asset(asset_id)
+
     def get_asset_by_path(self, path: str) -> AssetRecord | None:
         """Fetch an asset by its unique path."""
 
@@ -140,6 +146,63 @@ class AssetService:
         """Remove an asset identified by *path*."""
 
         return self._repository.delete_asset_by_path(path)
+
+    def prune_missing_assets(self, *, base_path: Path | None = None) -> int:
+        """Remove asset records whose backing files or folders are gone.
+
+        If *base_path* is provided, relative asset paths are resolved against it.
+        Paths that cannot be resolved safely are skipped.
+        """
+
+        root = None
+        if base_path is not None:
+            try:
+                root = base_path.expanduser().resolve()
+            except Exception:  # noqa: BLE001 - keep pruning best-effort
+                root = None
+
+        removed = 0
+        for asset in self._repository.list_assets():
+            raw_path = asset.path
+            resolved: Path | None
+            try:
+                candidate = Path(raw_path).expanduser()
+            except Exception:  # noqa: BLE001 - malformed path strings
+                candidate = None
+
+            if candidate is None:
+                resolved = None
+            elif candidate.is_absolute():
+                resolved = candidate
+            else:
+                if root is None:
+                    # Without a root we cannot safely resolve a relative path.
+                    continue
+                try:
+                    resolved = (root / candidate).resolve()
+                except Exception:  # noqa: BLE001 - resolution can fail on bad data
+                    resolved = None
+                else:
+                    try:
+                        resolved.relative_to(root)
+                    except ValueError:
+                        # Escapes the library root; ignore rather than pruning.
+                        continue
+
+            should_prune = False
+            if resolved is None:
+                should_prune = True
+            else:
+                try:
+                    should_prune = not resolved.exists()
+                except OSError:
+                    should_prune = True
+
+            if should_prune and self._repository.delete_asset(asset.id):
+                removed += 1
+                logger.debug("Pruned missing asset: %s", raw_path)
+
+        return removed
 
     def update_asset(
         self,
@@ -296,7 +359,20 @@ class AssetService:
     def tags_for_path(self, path: str) -> list[str]:
         """Return the tag list for *path*."""
 
-        return self._repository.tags_for_path(path)
+        try:
+            return self._repository.tags_for_path(path)
+        except (ValueError, RecursionError):
+            # Path is malformed; prune the record if possible to prevent repeats.
+            try:
+                self._repository.delete_asset_by_path(path)
+            except (ValueError, RecursionError):
+                pass
+            return []
+
+    def tags_for_asset(self, asset_id: int) -> list[str]:
+        """Return the tag list for the asset identified by *asset_id*."""
+
+        return self._repository.tags_for_asset_id(asset_id)
 
     def set_tags(self, path: str, tags: Iterable[str]) -> list[str]:
         """Replace the tag list for *path*."""

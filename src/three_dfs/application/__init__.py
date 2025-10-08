@@ -1,6 +1,5 @@
 """Qt application helpers for the 3dfs desktop shell."""
 
-from .main_window import MainWindow
 from .project_scanner import (
     ProjectRefreshRequest,
     ProjectScanOutcome,
@@ -13,5 +12,4 @@ __all__ = [
     "ProjectScanOutcome",
     "ProjectScanWorker",
     "ProjectScanWorkerSignals",
-    "MainWindow",
 ]

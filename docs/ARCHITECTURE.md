@@ -67,7 +67,6 @@ flowchart TD
     TC
   end
 
-  SIDEBAR -->|tag ops| SVC
   PROJECT -->|component metadata| SVC
 ```
 
@@ -78,7 +77,7 @@ Notes
 - Thumbnails: generated on demand from assets and cached on disk for fast redraws.
 - Customizer: the preview pane launches the embedded panel which runs the execution pipeline and records derivative assets.
 - Projects: the app watches project folders for changes so the pane can refresh components and arrangement scripts automatically.
-- Data: managed assets and thumbnails live under the configured library root; metadata and tags reside in `~/.3dfs/assets.sqlite3`.
+- Data: managed assets and thumbnails live under the configured library root; legacy tag metadata remains in `~/.3dfs/assets.sqlite3` for forward compatibility, although the UI currently omits tagging features.
 
 Local commands
 - Setup: `source setup.sh` (activates) or `./setup.sh --activate`

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QProgressBar,
     QSizePolicy,
     QStackedLayout,
     QTabWidget,
@@ -48,7 +49,7 @@ from ..thumbnails import (
 )
 from .customizer_dialog import CustomizerDialog, CustomizerSessionConfig
 from .customizer_panel import CustomizerPanel
-from .model_viewer import ModelViewer
+from .model_viewer import ModelViewer, load_mesh_data, _MeshData
 
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
     from ..storage import AssetRecord, AssetService, CustomizationRecord
@@ -128,6 +129,40 @@ class PreviewWorkerSignals(QObject):
 
     result = Signal(int, object)
     error = Signal(int, str)
+
+
+class ViewerLoaderSignals(QObject):
+    """Signals emitted by :class:`ViewerLoader`."""
+
+    result = Signal(int, object)
+    error = Signal(int, str)
+
+
+class ViewerLoader(QRunnable):
+    """Background task that loads mesh data for the 3D viewer."""
+
+    def __init__(self, token: int, path: Path) -> None:
+        super().__init__()
+        self._token = token
+        self._path = path
+        self.signals = ViewerLoaderSignals()
+
+    def run(self) -> None:  # pragma: no cover - executed via Qt threads
+        try:
+            mesh, error = load_mesh_data(self._path)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to load mesh for viewer: %s", self._path)
+            message = str(exc) or exc.__class__.__name__
+            self.signals.error.emit(self._token, message)
+            return
+
+        if mesh is not None:
+            self.signals.result.emit(self._token, mesh)
+        else:
+            self.signals.error.emit(
+                self._token,
+                error or "3D preview is unavailable for this file.",
+            )
 
 
 class PreviewWorker(QRunnable):
@@ -213,6 +248,11 @@ class PreviewPane(QWidget):
         self._customization_action_buttons: list[QPushButton] = []
         self._viewer_error_message: str | None = None
         self._text_unavailable_message: str | None = None
+        self._viewer_mesh: _MeshData | None = None
+        self._viewer_path: Path | None = None
+        self._viewer_task_counter = 0
+        self._viewer_current_task: int | None = None
+        self._viewer_workers: dict[int, ViewerLoader] = {}
 
         self._title_label = QLabel("Preview", self)
         self._title_label.setObjectName("previewTitle")
@@ -275,6 +315,22 @@ class PreviewPane(QWidget):
         self._message_label.setAlignment(Qt.AlignCenter)
         self._message_label.setWordWrap(True)
 
+        self._status_widget = QWidget(self)
+        status_layout = QHBoxLayout(self._status_widget)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(6)
+        self._status_label = QLabel("", self._status_widget)
+        self._status_label.setObjectName("previewStatus")
+        self._status_label.setWordWrap(True)
+        self._loading_indicator = QProgressBar(self._status_widget)
+        self._loading_indicator.setRange(0, 0)
+        self._loading_indicator.setTextVisible(False)
+        self._loading_indicator.setFixedHeight(10)
+        status_layout.addWidget(self._status_label, 1)
+        status_layout.addWidget(self._loading_indicator, 0)
+        self._status_widget.setVisible(False)
+        self._loading_indicator.setVisible(False)
+
         self._thumbnail_label = QLabel(self)
         self._thumbnail_label.setObjectName("previewThumbnail")
         self._thumbnail_label.setAlignment(Qt.AlignCenter)
@@ -289,6 +345,7 @@ class PreviewPane(QWidget):
         self._viewer.setMinimumHeight(220)
         self._tabs = QTabWidget(self)
         self._tabs.setObjectName("previewTabs")
+        self._tabs.currentChanged.connect(self._handle_tab_changed)
         thumb_container = QWidget(self)
         thumb_layout = QVBoxLayout(thumb_container)
         thumb_layout.setContentsMargins(0, 0, 0, 0)
@@ -350,6 +407,7 @@ class PreviewPane(QWidget):
         layout.addLayout(header_row)
         layout.addWidget(self._path_label)
         layout.addWidget(self._description_label)
+        layout.addWidget(self._status_widget)
         layout.addWidget(self._customization_frame)
         layout.addLayout(self._stack, 1)
 
@@ -394,6 +452,8 @@ class PreviewPane(QWidget):
         self._customization_parameters_label.setVisible(False)
         self._customization_frame.setVisible(False)
         self._clear_customization_actions()
+        self._loading_indicator.setVisible(False)
+        self._status_widget.setVisible(False)
         self._show_message("Select an item to preview")
 
     def set_item(
@@ -426,6 +486,7 @@ class PreviewPane(QWidget):
         if not self._asset_metadata and asset_record is not None:
             self._asset_metadata = dict(asset_record.metadata)
         self._current_raw_path = path
+
         
         # Safely resolve the path with comprehensive error handling
         try:
@@ -487,6 +548,10 @@ class PreviewPane(QWidget):
         self._thumbnail_label.setToolTip("")
         self._viewer_error_message = None
         self._text_unavailable_message = None
+        self._viewer_mesh = None
+        self._viewer_path = None
+        self._viewer_current_task = None
+        self._viewer_workers.clear()
         self._customizer_context = None
         self._customize_button.setVisible(False)
         self._customize_button.setEnabled(False)
@@ -502,21 +567,12 @@ class PreviewPane(QWidget):
         # Prepare viewer tab
         self._tabs.setTabToolTip(self._viewer_tab_index, "")
         if suffix in _MODEL_EXTENSIONS and path_obj is not None:
-            try:
-                self._viewer.set_path(path_obj)
-                self._tabs.setTabEnabled(self._viewer_tab_index, True)
-                self._tabs.setTabToolTip(
-                    self._viewer_tab_index,
-                    "Interactive 3D viewer for supported meshes.",
-                )
-            except Exception:
-                self._tabs.setTabEnabled(self._viewer_tab_index, False)
-                message = (
-                    getattr(self._viewer, "last_error_message", None)
-                    or "3D preview is unavailable for this file."
-                )
-                self._viewer_error_message = message
-                self._tabs.setTabToolTip(self._viewer_tab_index, message)
+            self._viewer_path = path_obj
+            self._tabs.setTabEnabled(self._viewer_tab_index, True)
+            self._tabs.setTabToolTip(
+                self._viewer_tab_index,
+                "Interactive 3D viewer for supported meshes.",
+            )
         else:
             self._tabs.setCurrentIndex(0)
             self._tabs.setTabEnabled(self._viewer_tab_index, False)
@@ -539,7 +595,7 @@ class PreviewPane(QWidget):
             self._text_unavailable_message = None
         self._tabs.setTabToolTip(self._text_tab_index, "")
 
-        self._show_message(f"Loading preview for {display_label}…")
+        self._show_message(f"Loading preview for {display_label}…", busy=True)
         if path_obj is not None:
             self._enqueue_preview(path_obj)
             self._prepare_customizer(path_obj)
@@ -617,7 +673,7 @@ class PreviewPane(QWidget):
         if self._current_absolute_path is None:
             return
         label = self._title_label.text() or "item"
-        self._show_message(f"Loading preview for {label}…")
+        self._show_message(f"Loading preview for {label}…", busy=True)
         self._enqueue_preview(Path(self._current_absolute_path))
 
     def _is_safe_path_string(self, path_str: str) -> bool:
@@ -1148,9 +1204,17 @@ class PreviewPane(QWidget):
     def can_customize(self) -> bool:
         return self._customizer_context is not None
 
-    def _show_message(self, text: str) -> None:
-        self._message_label.setText(text)
-        self._stack.setCurrentWidget(self._message_container)
+    def _show_message(self, text: str, *, busy: bool = False) -> None:
+        if busy:
+            self._status_label.setText(text)
+            self._status_widget.setVisible(True)
+            self._loading_indicator.setVisible(True)
+            self._stack.setCurrentWidget(self._preview_container)
+        else:
+            self._status_widget.setVisible(False)
+            self._loading_indicator.setVisible(False)
+            self._message_label.setText(text)
+            self._stack.setCurrentWidget(self._message_container)
 
     @Slot(int, object)
     def _handle_worker_result(self, token: int, payload: object) -> None:
@@ -1187,6 +1251,8 @@ class PreviewPane(QWidget):
 
     def _apply_outcome(self, outcome: PreviewOutcome) -> None:
         self._current_task_id = None
+        self._loading_indicator.setVisible(False)
+        self._status_widget.setVisible(False)
         self._stack.setCurrentWidget(self._preview_container)
 
         if outcome.asset_record is not None:
@@ -1236,6 +1302,11 @@ class PreviewPane(QWidget):
         self._populate_metadata(metadata_entries)
         if self._current_absolute_path is not None:
             self._prepare_customizer(Path(self._current_absolute_path))
+        if self._viewer_path is not None and self._tabs.currentIndex() == self._viewer_tab_index:
+            self._start_viewer_load()
+            if self._tabs.currentIndex() == self._viewer_tab_index:
+                self._tabs.setCurrentIndex(self._thumbnail_tab_index)
+
 
     def _configure_text_preview(self, outcome: PreviewOutcome) -> None:
         if outcome.text_content is None:
@@ -1265,6 +1336,77 @@ class PreviewPane(QWidget):
             self._viewer_tab_index
         ):
             self._tabs.setCurrentIndex(self._text_tab_index)
+
+    @Slot(int)
+    def _handle_tab_changed(self, index: int) -> None:
+        if index == self._viewer_tab_index:
+            if self._viewer_mesh is not None and self._viewer_path is not None:
+                self._viewer.set_mesh_data(self._viewer_mesh, self._viewer_path)
+                return
+            self._start_viewer_load()
+        else:
+            if self._viewer_current_task is None:
+                self._status_widget.setVisible(False)
+
+    def _start_viewer_load(self) -> None:
+        if self._viewer_path is None:
+            return
+        if self._viewer_current_task is not None:
+            return
+
+        self._viewer_task_counter += 1
+        token = self._viewer_task_counter
+        loader = ViewerLoader(token, self._viewer_path)
+        loader.signals.result.connect(self._handle_viewer_result)
+        loader.signals.error.connect(self._handle_viewer_error)
+        self._viewer_workers[token] = loader
+        self._viewer_current_task = token
+        self._status_label.setText("Loading 3D view…")
+        self._status_widget.setVisible(True)
+        self._loading_indicator.setVisible(True)
+        self._thread_pool.start(loader)
+
+    @Slot(int, object)
+    def _handle_viewer_result(self, token: int, payload: object) -> None:
+        loader = self._viewer_workers.pop(token, None)
+        if loader is not None:
+            del loader
+        if token != self._viewer_current_task:
+            return
+
+        mesh = payload if isinstance(payload, _MeshData) else None
+        self._viewer_current_task = None
+        self._status_widget.setVisible(False)
+        self._loading_indicator.setVisible(False)
+        if mesh is None or self._viewer_path is None:
+            return
+
+        self._viewer_mesh = mesh
+        self._viewer_error_message = None
+        self._viewer.set_mesh_data(mesh, self._viewer_path)
+        self._tabs.setTabEnabled(self._viewer_tab_index, True)
+        self._tabs.setTabToolTip(
+            self._viewer_tab_index,
+            "Interactive 3D viewer for supported meshes.",
+        )
+
+    @Slot(int, str)
+    def _handle_viewer_error(self, token: int, message: str) -> None:
+        loader = self._viewer_workers.pop(token, None)
+        if loader is not None:
+            del loader
+        if token != self._viewer_current_task:
+            return
+
+        self._viewer_current_task = None
+        self._status_widget.setVisible(False)
+        self._loading_indicator.setVisible(False)
+        self._viewer_mesh = None
+        self._viewer_error_message = message
+        self._tabs.setTabEnabled(self._viewer_tab_index, False)
+        self._tabs.setTabToolTip(self._viewer_tab_index, message)
+        if self._tabs.currentIndex() == self._viewer_tab_index:
+            self._tabs.setCurrentIndex(self._thumbnail_tab_index)
 
     def _update_thumbnail_display(self) -> None:
         if self._current_pixmap is None or self._current_pixmap.isNull():
@@ -1444,7 +1586,22 @@ def _build_preview_outcome(
     text_preview_limit: int = DEFAULT_TEXT_PREVIEW_MAX_BYTES,
 ) -> PreviewOutcome:
     if not path.exists():
-        raise FileNotFoundError(f"{path} does not exist")
+        message = "File is missing on disk. Refresh the library to update this entry."
+        metadata = [
+            ("Kind", "Missing"),
+            ("Location", str(path)),
+            ("Status", "Asset path could not be located"),
+        ]
+        return PreviewOutcome(
+            path=path,
+            metadata=metadata,
+            thumbnail_bytes=None,
+            thumbnail_message=message,
+            asset_record=asset_record,
+            text_content=None,
+            text_role=None,
+            text_truncated=False,
+        )
 
     mime_type, _ = mimetypes.guess_type(path.name)
 

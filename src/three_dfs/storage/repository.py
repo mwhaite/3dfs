@@ -151,7 +151,10 @@ class AssetRepository:
     def get_asset_by_path(self, path: str) -> AssetRecord | None:
         """Return the asset identified by *path* if present."""
 
-        normalized_path = self._normalize_path(path)
+        try:
+            normalized_path = self._normalize_path(path)
+        except ValueError:
+            return None
         with self._storage.connect() as connection:
             row = connection.execute(
                 "SELECT * FROM assets WHERE path = ?",
@@ -240,7 +243,10 @@ class AssetRepository:
     def delete_asset_by_path(self, path: str) -> bool:
         """Delete an asset matching *path* if present."""
 
-        normalized_path = self._normalize_path(path)
+        try:
+            normalized_path = self._normalize_path(path)
+        except ValueError:
+            return False
         with self._storage.connect() as connection:
             cursor = connection.execute(
                 "DELETE FROM assets WHERE path = ?",
@@ -643,11 +649,22 @@ class AssetRepository:
 
     def tags_for_path(self, path: str) -> list[str]:
         """Return the tags associated with *path*."""
-
-        asset = self.get_asset_by_path(path)
+        try:
+            asset = self.get_asset_by_path(path)
+        except RecursionError:
+            return []
         if asset is None:
             return []
         return list(asset.tags)
+
+    def tags_for_asset_id(self, asset_id: int) -> list[str]:
+        """Return the tags associated with the asset identified by *asset_id*."""
+
+        try:
+            record = self.get_asset(asset_id)
+        except RecursionError:
+            return []
+        return list(record.tags) if record is not None else []
 
     def search_tags(self, query: str) -> dict[str, list[str]]:
         """Return assets whose tag text contains *query* (case-insensitive)."""
@@ -719,7 +736,11 @@ class AssetRepository:
             yield current_path, list(bucket)
 
     def _normalize_path(self, path: str) -> str:
-        value = str(path).strip()
+        try:
+            value = str(path)
+        except RecursionError as exc:
+            raise ValueError("Asset path cannot be normalized") from exc
+        value = value.strip()
         if not value:
             raise ValueError("Asset path cannot be empty")
         return value

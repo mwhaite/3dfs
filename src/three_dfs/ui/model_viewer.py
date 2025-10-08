@@ -79,6 +79,250 @@ class _MeshData:
     radius: float  # scalar
 
 
+def _load_with_trimesh_mesh(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    if trimesh is None:
+        return None
+    try:
+        mesh = trimesh.load(path, force="mesh")  # type: ignore[call-arg]
+    except Exception:
+        return None
+
+    if hasattr(mesh, "geometry") and getattr(mesh, "geometry", None):
+        try:
+            mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))  # type: ignore[assignment]
+        except Exception:
+            return None
+
+    if not hasattr(mesh, "vertices") or not hasattr(mesh, "faces"):
+        return None
+
+    try:
+        has_data = len(mesh.vertices) and len(mesh.faces)
+    except Exception:
+        return None
+
+    if not has_data:
+        return None
+
+    vertices = np.asarray(mesh.vertices, dtype=np.float32)
+    faces = np.asarray(mesh.faces, dtype=np.int32)
+    if vertices.size == 0 or faces.size == 0:
+        return None
+    return vertices, faces
+
+
+def _load_fbx_mesh_arrays(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    if fbx is None:
+        return None
+
+    manager = fbx.FbxManager.Create()
+    if manager is None:
+        return None
+    try:
+        ios = fbx.FbxIOSettings.Create(manager, fbx.IOSROOT)
+        manager.SetIOSettings(ios)
+
+        importer = fbx.FbxImporter.Create(manager, "")
+        if importer is None:
+            return None
+        try:
+            if not importer.Initialize(str(path), -1, manager.GetIOSettings()):
+                return None
+
+            scene = fbx.FbxScene.Create(manager, "scene")
+            if scene is None:
+                return None
+            if not importer.Import(scene):
+                return None
+
+            converter = fbx.FbxGeometryConverter(manager)
+            try:
+                converter.Triangulate(scene, True)
+            except Exception:
+                pass
+
+            root = scene.GetRootNode()
+            if root is None:
+                return None
+
+            vertices: list[np.ndarray] = []
+            faces: list[list[int]] = []
+            offset = 0
+
+            def visit(node) -> None:  # type: ignore[no-untyped-def]
+                nonlocal offset
+                if node is None:
+                    return
+                attr = node.GetNodeAttribute()
+                if (
+                    attr is not None
+                    and attr.GetAttributeType() == fbx.FbxNodeAttribute.eMesh
+                ):
+                    mesh = node.GetMesh()
+                    if mesh is not None:
+                        count = mesh.GetControlPointsCount()
+                        if count:
+                            control_points = mesh.GetControlPoints()
+                            verts = np.array(
+                                [
+                                    (
+                                        control_points[i][0],
+                                        control_points[i][1],
+                                        control_points[i][2],
+                                    )
+                                    for i in range(count)
+                                ],
+                                dtype=np.float32,
+                            )
+                            vertices.append(verts)
+                            for poly_index in range(mesh.GetPolygonCount()):
+                                if mesh.GetPolygonSize(poly_index) == 3:
+                                    faces.append(
+                                        [
+                                            mesh.GetPolygonVertex(poly_index, 0)
+                                            + offset,
+                                            mesh.GetPolygonVertex(poly_index, 1)
+                                            + offset,
+                                            mesh.GetPolygonVertex(poly_index, 2)
+                                            + offset,
+                                        ]
+                                    )
+                            offset += count
+                for i in range(node.GetChildCount()):
+                    visit(node.GetChild(i))
+
+            visit(root)
+
+            if not vertices or not faces:
+                return None
+
+            all_vertices = np.vstack(vertices).astype(np.float32)
+            all_faces = np.asarray(faces, dtype=np.int32)
+            return all_vertices, all_faces
+        finally:
+            importer.Destroy()
+    finally:
+        manager.Destroy()
+    return None
+
+
+def _build_box_arrays(
+    mins: np.ndarray,
+    maxs: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    x0, y0, z0 = mins
+    x1, y1, z1 = maxs
+    verts = np.array(
+        [
+            (x0, y0, z0),
+            (x1, y0, z0),
+            (x1, y1, z0),
+            (x0, y1, z0),
+            (x0, y0, z1),
+            (x1, y0, z1),
+            (x1, y1, z1),
+            (x0, y1, z1),
+        ],
+        dtype=np.float32,
+    )
+    faces = np.array(
+        [
+            (0, 1, 2),
+            (0, 2, 3),
+            (4, 5, 6),
+            (4, 6, 7),
+            (0, 1, 5),
+            (0, 5, 4),
+            (2, 3, 7),
+            (2, 7, 6),
+            (1, 2, 6),
+            (1, 6, 5),
+            (3, 0, 4),
+            (3, 4, 7),
+        ],
+        dtype=np.int32,
+    )
+    return verts, faces
+
+
+def load_mesh_data(path: Path | None) -> tuple[_MeshData | None, str | None]:
+    if path is None:
+        return None, "No model selected."
+    if not path.exists():
+        return None, "Model file does not exist."
+
+    suffix = path.suffix.lower()
+    vertices: np.ndarray | None = None
+    faces: np.ndarray | None = None
+    error_message: str | None = None
+
+    if suffix in {".stl", ".obj", ".ply", ".glb", ".gltf"}:
+        if trimesh is None:
+            return (
+                None,
+                "Install the `trimesh` dependency to enable STL/OBJ/PLY/GLB/GLTF previews.",
+            )
+        trimesh_result = _load_with_trimesh_mesh(path)
+        if trimesh_result is not None:
+            vertices, faces = trimesh_result
+        else:
+            label = suffix.lstrip(".").upper() or "3D"
+            error_message = f"Could not parse {label} mesh."
+
+    if (vertices is None or faces is None) and suffix == ".fbx":
+        if fbx is None:
+            return (
+                None,
+                "Autodesk FBX SDK is not available, so FBX previews are disabled.",
+            )
+        fbx_results = _load_fbx_mesh_arrays(path)
+        if fbx_results is not None:
+            vertices, faces = fbx_results
+        elif error_message is None:
+            error_message = "Could not parse FBX mesh."
+
+    if vertices is None or faces is None:
+        if suffix in {".step", ".stp"}:
+            meta = extract_step_metadata(path)
+            mins = meta.get("bounding_box_min") or [0, 0, 0]
+            maxs = meta.get("bounding_box_max") or [1, 1, 1]
+            v, f = _build_box_arrays(
+                np.array(mins, dtype=float),
+                np.array(maxs, dtype=float),
+            )
+            vertices, faces = v, f
+
+    if vertices is None or faces is None:
+        if error_message is None:
+            label = suffix.lstrip(".").upper() or "this format"
+            error_message = f"3D preview is not available for {label}."
+        return None, error_message
+
+    normals = np.zeros_like(vertices, dtype=np.float32)
+    tris = vertices[faces]
+    n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    lens = np.linalg.norm(n, axis=1)
+    valid = lens > 0
+    n[valid] /= lens[valid][:, None]
+    for i, face in enumerate(faces):
+        normals[face] += n[i]
+    lens = np.linalg.norm(normals, axis=1)
+    valid = lens > 0
+    normals[valid] /= lens[valid][:, None]
+
+    center = vertices.mean(axis=0).astype(np.float32)
+    radius = float(np.linalg.norm(vertices - center, axis=1).max())
+
+    mesh = _MeshData(
+        vertices=vertices.astype(np.float32),
+        normals=normals.astype(np.float32),
+        indices=faces.astype(np.uint32).ravel(),
+        center=center,
+        radius=radius if radius > 0 else 1.0,
+    )
+    return mesh, None
+
+
 class ModelViewer(QOpenGLWidget):
     """A simple OpenGL-based model viewer with orbit controls."""
 
@@ -346,84 +590,16 @@ class ModelViewer(QOpenGLWidget):
         return QVector3D(float(arr[0]), float(arr[1]), float(arr[2]))
 
     def _load_mesh(self) -> tuple[bool, str | None]:
-        self._mesh = None
-        if self._path is None:
-            return False, "No model selected."
-        if not self._path.exists():
-            return False, "Model file does not exist."
+        mesh, error = load_mesh_data(self._path)
+        if mesh is None:
+            self._mesh = None
+            return False, error
+        self.set_mesh_data(mesh, self._path)
+        return True, None
 
-        suffix = self._path.suffix.lower()
-        vertices: np.ndarray | None = None
-        faces: np.ndarray | None = None
-        error_message: str | None = None
-
-        if suffix in {".stl", ".obj", ".ply", ".glb", ".gltf"}:
-            if trimesh is None:
-                return (
-                    False,
-                    "Install the `trimesh` dependency to enable "
-                    "STL/OBJ/PLY/GLB/GLTF previews.",
-                )
-            trimesh_result = self._load_with_trimesh(self._path)
-            if trimesh_result is not None:
-                vertices, faces = trimesh_result
-            else:
-                label = suffix.lstrip(".").upper() or "3D"
-                error_message = f"Could not parse {label} mesh."
-
-        if (vertices is None or faces is None) and suffix == ".fbx":
-            if fbx is None:
-                return (
-                    False,
-                    "Autodesk FBX SDK is not available, so FBX previews are disabled.",
-                )
-            fbx_result = self._load_fbx_mesh(self._path)
-            if fbx_result is not None:
-                vertices, faces = fbx_result
-            else:
-                error_message = "Could not parse FBX mesh."
-
-        if vertices is None or faces is None:
-            if suffix in {".step", ".stp"}:
-                meta = extract_step_metadata(self._path)
-                mins = meta.get("bounding_box_min") or [0, 0, 0]
-                maxs = meta.get("bounding_box_max") or [1, 1, 1]
-                v, f = self._build_box(
-                    np.array(mins, dtype=float),
-                    np.array(maxs, dtype=float),
-                )
-                vertices, faces = v, f
-
-        if vertices is None or faces is None:
-            if error_message is None:
-                label = suffix.lstrip(".").upper() or "this format"
-                error_message = f"3D preview is not available for {label}."
-            return False, error_message
-
-        # Compute normals
-        normals = np.zeros_like(vertices, dtype=np.float32)
-        tris = vertices[faces]
-        n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
-        lens = np.linalg.norm(n, axis=1)
-        valid = lens > 0
-        n[valid] /= lens[valid][:, None]
-        for i, face in enumerate(faces):
-            normals[face] += n[i]
-        lens = np.linalg.norm(normals, axis=1)
-        valid = lens > 0
-        normals[valid] /= lens[valid][:, None]
-
-        center = vertices.mean(axis=0).astype(np.float32)
-        radius = float(np.linalg.norm(vertices - center, axis=1).max())
-
-        self._mesh = _MeshData(
-            vertices=vertices.astype(np.float32),
-            normals=normals.astype(np.float32),
-            indices=faces.astype(np.uint32).ravel(),
-            center=center,
-            radius=radius if radius > 0 else 1.0,
-        )
-        # Reset view and apply auto-fit on new model
+    def set_mesh_data(self, mesh: _MeshData, path: Path | None = None) -> None:
+        self._mesh = mesh
+        self._path = path
         self._yaw = 0.0
         self._pitch = 0.0
         self._pan_x = 0.0
@@ -431,7 +607,7 @@ class ModelViewer(QOpenGLWidget):
         self._user_modified = False
         self._auto_fit_applied = False
         self._fit_to_view()
-        return True, None
+        self.update()
 
     def _load_with_trimesh(self, path: Path) -> tuple[np.ndarray, np.ndarray] | None:
         if trimesh is None:

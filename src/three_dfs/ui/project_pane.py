@@ -91,11 +91,7 @@ class ProjectPane(QWidget):
         self._path_label = QLabel("", self)
         self._path_label.setObjectName("projectPath")
         self._path_label.setWordWrap(True)
-        self._breadcrumb = QLabel("", self)
-        self._breadcrumb.setObjectName("projectBreadcrumb")
-        self._breadcrumb.setTextFormat(Qt.RichText)
-        self._breadcrumb.setOpenExternalLinks(False)
-        self._breadcrumb.linkActivated.connect(self._handle_breadcrumb_link)
+        self._breadcrumb = None
 
         self._readme = QTextEdit(self)
         self._readme.setObjectName("projectReadme")
@@ -151,7 +147,6 @@ class ProjectPane(QWidget):
         layout.setSpacing(6)
         layout.addWidget(self._title)
         layout.addWidget(self._path_label)
-        layout.addWidget(self._breadcrumb)
         layout.addLayout(actions_row)
         layout.addWidget(self._readme)
         layout.addWidget(splitter, 1)
@@ -173,10 +168,12 @@ class ProjectPane(QWidget):
         self._project_path = path
         self._title.setText(label)
         self._path_label.setText(path)
-        self._update_breadcrumb(Path(path))
-        self._btn_add_attachments.setEnabled(True)
-        self._btn_open_folder.setEnabled(True)
-        self._btn_up.setEnabled(True)
+        folder = self._coerce_path(path)
+        self._load_readme(folder)
+        enable_actions = folder is not None
+        self._btn_add_attachments.setEnabled(enable_actions)
+        self._btn_open_folder.setEnabled(enable_actions)
+        self._btn_up.setEnabled(enable_actions)
         self._components.clear()
         self._search.clear()
         comp_paths: list[str] = []
@@ -241,8 +238,6 @@ class ProjectPane(QWidget):
         # Queue thumbnail icon generation for parts
         if comp_paths or attach_paths or arrangement_paths:
             self._enqueue_icons(comp_paths, attach_paths + arrangement_paths)
-        # Load README for the project folder
-        self._load_readme(Path(path))
 
         if self._components.count():
             self._components.setCurrentRow(0)
@@ -329,23 +324,12 @@ class ProjectPane(QWidget):
     # ------------------------------------------------------------------
     # Breadcrumb helpers
     # ------------------------------------------------------------------
-    def _update_breadcrumb(self, folder: Path) -> None:
-        parts = []
-        # Build clickable breadcrumb from root to leaf
-        acc = Path(folder.anchor) if folder.anchor else Path("/")
-        for comp in folder.parts:
-            # Skip empty or root duplicate
-            if comp in ("/", folder.anchor):
-                continue
-            acc = acc / comp
-            href = acc.as_posix()
-            parts.append(f'<a href="{href}">{comp}</a>')
-        self._breadcrumb.setText(" / ".join(parts) or folder.as_posix())
+    def _update_breadcrumb(self, folder: Path | None, *, raw_path: str | None = None) -> None:
+        del folder, raw_path
 
     @Slot(str)
     def _handle_breadcrumb_link(self, href: str) -> None:
-        if href:
-            self.navigateToPathRequested.emit(href)
+        del href
 
     # ------------------------------------------------------------------
     # Selection + Context Menu (class methods)
@@ -461,16 +445,10 @@ class ProjectPane(QWidget):
         path_str = str(raw_path or "").strip()
         if not path_str:
             return None
-        try:
-            candidate = Path(path_str)
-        except Exception:
+        candidate = self._coerce_path(path_str)
+        if candidate is None:
             return None
-        base: Path | None = None
-        if self._project_path:
-            try:
-                base = Path(self._project_path)
-            except Exception:
-                base = None
+        base = self._coerce_path(self._project_path)
         try:
             if base is not None and not candidate.is_absolute():
                 candidate = base / candidate
@@ -486,15 +464,16 @@ class ProjectPane(QWidget):
         path = self._absolute_path_for_item(item)
         if not path:
             return False
-        try:
-            candidate = Path(path)
-            if candidate.exists():
-                if candidate.is_dir():
-                    return False
-                if candidate.is_file():
-                    return True
-        except Exception:
-            pass
+        candidate = self._coerce_path(path)
+        if candidate is not None:
+            try:
+                if candidate.exists():
+                    if candidate.is_dir():
+                        return False
+                    if candidate.is_file():
+                        return True
+            except Exception:
+                pass
         metadata = self._item_metadata(item)
         handler = str(metadata.get("handler") or "").strip().lower()
         return bool(handler and handler != "none")
@@ -567,7 +546,7 @@ class ProjectPane(QWidget):
                     path = str(entry.get("path") or "").strip()
                     if not path:
                         continue
-                    label = str(entry.get("label") or Path(path).name)
+                    label = str(entry.get("label") or self._safe_name(path))
                     relationship = str(entry.get("relationship") or "").strip()
                     related.append(
                         {"path": path, "label": label, "relationship": relationship}
@@ -576,11 +555,11 @@ class ProjectPane(QWidget):
                     path = str(entry or "").strip()
                     if not path:
                         continue
-                    related.append({"path": path, "label": Path(path).name})
+                    related.append({"path": path, "label": self._safe_name(path)})
         elif isinstance(raw_related, str):
             path = raw_related.strip()
             if path:
-                related.append({"path": path, "label": Path(path).name})
+                related.append({"path": path, "label": self._safe_name(path)})
         return related
 
     def _open_related_item(self, payload: Mapping[str, Any] | dict[str, Any]) -> None:
@@ -611,19 +590,16 @@ class ProjectPane(QWidget):
             return None
         is_placeholder = kind == "placeholder"
         is_project_kind = kind == "project"
-        base_path: Path | None = None
-        if self._project_path:
+        base_path = self._coerce_path(self._project_path)
+
+        candidate_path = self._coerce_path(path_str)
+        if candidate_path is not None and base_path is not None:
             try:
-                base_path = Path(self._project_path)
+                if not candidate_path.is_absolute():
+                    candidate_path = base_path / candidate_path
+                candidate_path = candidate_path.expanduser()
             except Exception:
-                base_path = None
-        try:
-            candidate_path = Path(path_str)
-            if base_path is not None and not candidate_path.is_absolute():
-                candidate_path = base_path / candidate_path
-            candidate_path = candidate_path.expanduser()
-        except Exception:
-            candidate_path = None
+                candidate_path = None
 
         def _resolve_path(path_obj: Path) -> str:
             try:
@@ -635,12 +611,15 @@ class ProjectPane(QWidget):
         if candidate_path is None:
             if not (is_placeholder or is_project_kind):
                 return None
-            try:
-                fallback = Path(path_str)
-                if base_path is not None and not fallback.is_absolute():
-                    fallback = base_path / fallback
-            except Exception:
+            fallback = self._coerce_path(path_str)
+            if fallback is None:
                 return None
+            if base_path is not None:
+                try:
+                    if not fallback.is_absolute():
+                        fallback = base_path / fallback
+                except Exception:
+                    return None
             return _resolve_path(fallback)
 
         try:
@@ -689,8 +668,18 @@ class ProjectPane(QWidget):
         else:
             super().dropEvent(event)
 
-    def _load_readme(self, folder: Path) -> None:
-        base = folder if folder.is_dir() else folder.parent
+    def _load_readme(self, folder: Path | None) -> None:
+        if folder is None:
+            self._readme.clear()
+            self._readme.setVisible(False)
+            return
+
+        try:
+            base = folder if folder.is_dir() else folder.parent
+        except Exception:
+            self._readme.clear()
+            self._readme.setVisible(False)
+            return
         allowed = {"", ".md", ".markdown", ".txt", ".rst"}
         candidates = []
         try:
@@ -723,6 +712,32 @@ class ProjectPane(QWidget):
             pass
         self._readme.clear()
         self._readme.setVisible(False)
+
+    def _coerce_path(self, raw: str | Path | None) -> Path | None:
+        if raw is None:
+            return None
+        try:
+            value = str(raw).strip()
+        except Exception:
+            return None
+        if not value:
+            return None
+        try:
+            candidate = Path(value)
+            _ = candidate.parts
+        except (RecursionError, ValueError, OSError):
+            return None
+        return candidate
+
+    def _safe_name(self, raw_path: str) -> str:
+        candidate = self._coerce_path(raw_path)
+        if candidate is None:
+            return raw_path
+        try:
+            name = candidate.name
+        except Exception:
+            return raw_path
+        return name or raw_path
 
     def _placeholder_icon(self) -> QPixmap:
         """Return an icon for placeholder components."""

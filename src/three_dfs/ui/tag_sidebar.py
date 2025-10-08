@@ -33,19 +33,19 @@ class TagSidebar(QWidget):
     performs an operation so that other application components can react.
     """
 
-    activeItemChanged = Signal(object)
+    activeItemChanged = Signal(int)
     """Emitted whenever the focused repository item changes."""
 
-    tagAdded = Signal(str, str)
+    tagAdded = Signal(int, str)
     """Emitted when a tag is created for the active item."""
 
-    tagRemoved = Signal(str, str)
+    tagRemoved = Signal(int, str)
     """Emitted when a tag is deleted from the active item."""
 
-    tagRenamed = Signal(str, str, str)
+    tagRenamed = Signal(int, str, str)
     """Emitted when a tag is renamed for the active item."""
 
-    tagsChanged = Signal(str, list)
+    tagsChanged = Signal(int, list)
     """Emitted for any change that affects the active item's tag collection."""
 
     searchRequested = Signal(str)
@@ -64,7 +64,8 @@ class TagSidebar(QWidget):
         super().__init__(parent)
         self._store = store or TagStore()
         self._asset_service = asset_service or getattr(self._store, "_service", None)
-        self._active_item: str | None = None
+        self._active_asset_id: int | None = None
+        self._active_asset_path: str | None = None
         self._all_tags_for_item: list[str] = []
         self._known_tags: list[str] = []
 
@@ -113,28 +114,48 @@ class TagSidebar(QWidget):
     # Qt API surface
     # ------------------------------------------------------------------
     @Slot(object)
-    def set_active_item(self, item_id: str | None) -> None:
-        """Switch the sidebar context to *item_id* and refresh the view."""
+    def set_active_item(self, item_id: object | None) -> None:
+        """Switch the sidebar context to the asset identified by *item_id*."""
 
-        if item_id == self._active_item:
-            # Refresh the view even when the identifier did not change.  This
-            # allows external callers to force a reload after out-of-band
-            # modifications.
+        if item_id is None:
+            asset_id = None
+        else:
+            try:
+                asset_id = int(item_id)
+            except (TypeError, ValueError):
+                asset_id = None
+
+        if asset_id == self._active_asset_id:
             self._load_tags_for_active_item()
             self._refresh_derivatives()
             self._emit_tags_changed()
             return
 
-        self._active_item = item_id
+        self._active_asset_id = asset_id
+        self._active_asset_path = None
+        if asset_id is not None and self._asset_service is not None:
+            try:
+                record = self._asset_service.get_asset(asset_id)
+            except Exception:
+                record = None
+            if record is not None:
+                self._active_asset_path = record.path
+
         self._load_tags_for_active_item()
-        self.activeItemChanged.emit(item_id)
         self._emit_tags_changed()
         self._refresh_derivatives()
+        if asset_id is not None:
+            self.activeItemChanged.emit(asset_id)
 
     def active_item(self) -> str | None:
-        """Return the identifier of the item currently being edited."""
+        """Return the path of the item currently being edited."""
 
-        return self._active_item
+        return self._active_asset_path
+
+    def active_asset_id(self) -> int | None:
+        """Return the active asset identifier."""
+
+        return self._active_asset_id
 
     def tags(self) -> list[str]:
         """Return the list of tags for the active item."""
@@ -179,7 +200,7 @@ class TagSidebar(QWidget):
         self._handle_edit_tag()
 
     def _handle_add_tag(self) -> None:
-        if self._active_item is None:
+        if self._active_asset_id is None:
             return
 
         suggestions = [
@@ -205,19 +226,21 @@ class TagSidebar(QWidget):
             return
 
         try:
-            normalized = self._store.add_tag(self._active_item, new_tag)
+            normalized = self._store.add_tag_to_asset(
+                self._active_asset_id, new_tag
+            )
         except ValueError:
             return
 
         if normalized is None:
             return
 
-        self.tagAdded.emit(self._active_item, normalized)
+        self.tagAdded.emit(self._active_asset_id, normalized)
         self._load_tags_for_active_item()
         self._emit_tags_changed()
 
     def _handle_edit_tag(self) -> None:
-        if self._active_item is None:
+        if self._active_asset_id is None:
             return
 
         current_item = self._tag_list.currentItem()
@@ -240,10 +263,8 @@ class TagSidebar(QWidget):
             return
 
         try:
-            normalized = self._store.rename_tag(
-                self._active_item,
-                current_value,
-                new_tag,
+            normalized = self._store.rename_tag_for_asset(
+                self._active_asset_id, current_value, new_tag
             )
         except ValueError:
             return
@@ -251,12 +272,12 @@ class TagSidebar(QWidget):
         if normalized is None:
             return
 
-        self.tagRenamed.emit(self._active_item, current_value, normalized)
+        self.tagRenamed.emit(self._active_asset_id, current_value, normalized)
         self._load_tags_for_active_item()
         self._emit_tags_changed()
 
     def _handle_delete_tag(self) -> None:
-        if self._active_item is None:
+        if self._active_asset_id is None:
             return
 
         current_item = self._tag_list.currentItem()
@@ -265,24 +286,34 @@ class TagSidebar(QWidget):
 
         tag_value = current_item.text()
         try:
-            removed = self._store.remove_tag(self._active_item, tag_value)
+            removed = self._store.remove_tag_from_asset(
+                self._active_asset_id, tag_value
+            )
         except ValueError:
             return
 
         if not removed:
             return
 
-        self.tagRemoved.emit(self._active_item, tag_value)
+        self.tagRemoved.emit(self._active_asset_id, tag_value)
         self._load_tags_for_active_item()
         self._emit_tags_changed()
 
     def _load_tags_for_active_item(self) -> None:
-        if self._active_item is None:
+        if self._active_asset_id is None:
             self._active_label.setText("No item selected")
             self._all_tags_for_item = []
         else:
-            self._active_label.setText(f"Tags for {self._active_item}")
-            self._all_tags_for_item = self._store.tags_for(self._active_item)
+            if self._active_asset_path:
+                self._active_label.setText(f"Tags for {self._active_asset_path}")
+            else:
+                self._active_label.setText("Tags")
+            try:
+                self._all_tags_for_item = self._store.tags_for_asset(
+                    self._active_asset_id
+                )
+            except (ValueError, RecursionError):
+                self._all_tags_for_item = []
 
         self._refresh_available_tags()
         self._refresh_visible_tags()
@@ -310,16 +341,24 @@ class TagSidebar(QWidget):
 
     def _refresh_derivatives(self) -> None:
         self._derivative_list.clear()
-        if self._asset_service is None or not self._active_item:
+        if self._asset_service is None or self._active_asset_id is None:
             self._derivatives_label.setVisible(False)
             self._derivative_list.setVisible(False)
             return
 
         try:
-            derivatives = self._asset_service.list_derivatives_for_asset(
-                self._active_item
-            )
+            asset = self._asset_service.get_asset(self._active_asset_id)
         except Exception:
+            asset = None
+
+        if asset is None:
+            self._derivatives_label.setVisible(False)
+            self._derivative_list.setVisible(False)
+            return
+
+        try:
+            derivatives = self._asset_service.list_derivatives_for_asset(asset.path)
+        except (ValueError, RecursionError, TypeError):
             derivatives = []
 
         if not derivatives:
@@ -327,7 +366,7 @@ class TagSidebar(QWidget):
             self._derivative_list.setVisible(False)
             return
 
-        base_path = Path(self._active_item)
+        base_path = Path(asset.path)
         for record in derivatives:
             label = record.label or Path(record.path).name
             item = QListWidgetItem(label)
@@ -362,7 +401,7 @@ class TagSidebar(QWidget):
             self.derivativeActivated.emit(str(target))
 
     def _update_ui_state(self) -> None:
-        has_item = self._active_item is not None
+        has_item = self._active_asset_id is not None
         has_selection = self._tag_list.currentItem() is not None
 
         self._tag_list.setEnabled(has_item)
@@ -371,9 +410,12 @@ class TagSidebar(QWidget):
         self._delete_button.setEnabled(has_item and has_selection)
 
     def _emit_tags_changed(self) -> None:
-        if self._active_item is None:
+        if self._active_asset_id is None:
             return
 
         self._refresh_available_tags()
-        tags = self._store.tags_for(self._active_item)
-        self.tagsChanged.emit(self._active_item, tags)
+        try:
+            tags = self._store.tags_for_asset(self._active_asset_id)
+        except (ValueError, RecursionError):
+            tags = []
+        self.tagsChanged.emit(self._active_asset_id, tags)

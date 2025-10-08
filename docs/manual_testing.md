@@ -7,4 +7,4 @@
 3. Confirm the preview pane shows the customization summary with a **Customize…** button.
 4. Click **Customize…** to open the dialog and adjust a parameter (for example change the `segments` slider).
 5. Trigger the build and verify that a success message appears summarising the generated artefact count.
-6. Back in the preview pane ensure the derivatives list reflects the newly created output and the tag sidebar shows the derivative entry.
+6. Back in the preview pane ensure the derivatives list reflects the newly created output.

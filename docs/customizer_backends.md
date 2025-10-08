@@ -51,8 +51,8 @@ settings.
 Launching the dialog instantiates the embedded `CustomizerPanel` inside a
 modal window, preserving the familiar sliders and toggles while delegating run
 execution to `execute_customization`.  Successful runs automatically refresh
-the preview summary and the new derivatives list in the tag sidebar, keeping
-related artefacts one click away without requiring a manual library rescan.
+the preview summary, keeping related artefacts one click away without
+requiring a manual library rescan.
 
 ## Adapting additional engines
 
