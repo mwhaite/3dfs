@@ -35,6 +35,30 @@
    python -m three_dfs
    ```
 
+## Linux AppImage packaging
+
+The repository includes a helper that freezes the desktop shell with PyInstaller
+and stages an AppDir suitable for AppImage distribution. Run the script from a
+Linux environment where the project dependencies (and PyInstaller) are
+installed:
+
+```bash
+python scripts/build_appimage.py --appimagetool /path/to/appimagetool
+```
+
+The script performs the following steps:
+
+1. Invokes PyInstaller to create a one-folder build of `three_dfs.app`.
+2. Copies launchers, desktop metadata, and icons from `appimage/` into a fresh
+   `AppDir`.
+3. Runs `appimagetool` when provided to emit `dist/linux/three-dfs-<version>.AppImage`.
+
+Use `--skip-appimagetool` to leave a ready-to-package `AppDir` on disk or
+`--allow-non-linux` when running in CI environments that emulate Linux. Pass
+`--collect-all`/`--hidden-import` flags directly to PyInstaller for additional
+packaging tweaks. The helper surfaces clear errors when PyInstaller or
+`appimagetool` are not available.
+
 ## Windows packaging
 
 Run `scripts/build_windows_bundle.py` on a Windows workstation (inside the
