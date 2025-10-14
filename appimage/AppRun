@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+APPDIR="$(dirname "$(readlink -f "$0")")"
+export APPDIR
+exec "$APPDIR/usr/bin/three-dfs" "$@"
