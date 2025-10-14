@@ -35,6 +35,28 @@
    python -m three_dfs
    ```
 
+## Windows packaging
+
+Run `scripts/build_windows_bundle.py` on a Windows workstation (inside the
+project's virtual environment) to freeze the desktop shell into a distributable
+executable using PyInstaller. The script mirrors the recommended settings for
+collecting Qt plugins and other native dependencies and accepts optional flags
+for advanced scenarios:
+
+```powershell
+python scripts/build_windows_bundle.py --zip --bundle-openscad "C:\\Program Files\\OpenSCAD\\openscad.exe"
+```
+
+Key options include:
+
+* `--onefile` – emit a single-file executable instead of the default folder
+  distribution.
+* `--icon` – provide a `.ico` file that becomes the Windows application icon.
+* `--bundle-openscad` – copy an existing `openscad.exe` into the bundle so the
+  OpenSCAD customizer backend works out of the box.
+* `--zip` – archive the output directory after a successful build for easier
+  distribution.
+
 4. Project layout:
 
    ```text
