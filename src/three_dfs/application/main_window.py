@@ -51,6 +51,87 @@ logger = logging.getLogger(__name__)
 __all__ = ["MainWindow"]
 
 
+_README_CANDIDATES: tuple[str, ...] = (
+    "readme",
+    "readme.md",
+    "readme.markdown",
+    "readme.txt",
+)
+
+
+def _resolve_attachment_directory(
+    project_folder: Path, selection: tuple[str, str] | None
+) -> Path:
+    """Return the folder where imported files should be placed."""
+
+    try:
+        resolved_project = project_folder.expanduser().resolve()
+    except Exception:
+        resolved_project = project_folder.expanduser()
+
+    if not selection:
+        return resolved_project
+
+    raw_path, raw_kind = selection
+    try:
+        path_str = str(raw_path or "").strip()
+    except Exception:
+        path_str = ""
+    if not path_str:
+        return resolved_project
+
+    try:
+        candidate = Path(path_str).expanduser()
+    except Exception:
+        return resolved_project
+
+    if not candidate.is_absolute():
+        candidate = resolved_project / candidate
+
+    if raw_kind == "placeholder":
+        target = candidate
+    else:
+        target = candidate if candidate.is_dir() else candidate.parent
+
+    try:
+        target_resolved = target.expanduser().resolve()
+    except Exception:
+        target_resolved = target.expanduser()
+
+    try:
+        target_resolved.relative_to(resolved_project)
+    except Exception:
+        return resolved_project
+
+    return target_resolved
+
+
+def _is_readme_candidate(path: Path) -> bool:
+    name_cf = path.name.casefold()
+    if name_cf in _README_CANDIDATES:
+        return True
+    return path.stem.casefold() == "readme"
+
+
+def _component_part_key(component_path: Path, project_folder: Path) -> str | None:
+    try:
+        parent = component_path.expanduser().resolve().parent
+        relative = parent.relative_to(project_folder)
+    except Exception:
+        return None
+    text = relative.as_posix()
+    return "." if not text or text == "." else text
+
+
+def _component_relative_path(component_path: Path, project_folder: Path) -> str | None:
+    try:
+        relative = component_path.expanduser().resolve().relative_to(project_folder)
+    except Exception:
+        return None
+    text = relative.as_posix()
+    return "." if not text or text == "." else text
+
+
 class MainWindow(QMainWindow):
     """Primary window for the 3dfs shell."""
 
@@ -98,7 +179,7 @@ class MainWindow(QMainWindow):
         )
 
         # Project pane shares the right split area via a stacked layout
-        self._project_pane = ProjectPane(self)
+        self._project_pane = ProjectPane(self, asset_service=self._asset_service)
         self._project_pane.setObjectName("projectPane")
         # Wire project pane actions
         self._project_pane.newPartRequested.connect(self._create_new_part)
@@ -115,6 +196,9 @@ class MainWindow(QMainWindow):
             self._add_project_attachments_from_files
         )
         self._project_pane.refreshRequested.connect(self._refresh_current_project)
+        self._project_pane.setPrimaryComponentRequested.connect(
+            self._set_primary_component
+        )
 
         # File system watcher for live project refresh
         self._fs_watcher = QFileSystemWatcher(self)
@@ -325,7 +409,7 @@ class MainWindow(QMainWindow):
         new_part_action.triggered.connect(self._create_new_part)
         project_menu.addAction(new_part_action)
 
-        add_attachment_action = QAction("Add Attachment(s) to Current Project…", self)
+        add_attachment_action = QAction("Upload File(s) to Current Project…", self)
         add_attachment_action.triggered.connect(self._add_project_attachments)
         project_menu.addAction(add_attachment_action)
 
@@ -970,7 +1054,7 @@ class MainWindow(QMainWindow):
     def _add_project_attachments(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
-        files, _ = QFileDialog.getOpenFileNames(self, "Select attachment files")
+        files, _ = QFileDialog.getOpenFileNames(self, "Select files to upload")
         if not files:
             return
         self._add_project_attachments_from_files(files)
@@ -978,11 +1062,11 @@ class MainWindow(QMainWindow):
     def _add_project_attachments_from_files(self, files: list[str]) -> None:
         asset = self._current_asset
         if asset is None or not isinstance(asset.metadata, dict):
-            self.statusBar().showMessage("Select a project to add attachments.", 3000)
+            self.statusBar().showMessage("Select a project to upload files.", 3000)
             return
         kind = str(asset.metadata.get("kind") or "").lower()
         if kind != "project":
-            self.statusBar().showMessage("Select a project to add attachments.", 3000)
+            self.statusBar().showMessage("Select a project to upload files.", 3000)
             return
 
         project_folder = Path(asset.path).expanduser().resolve()
@@ -990,20 +1074,17 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Project path is not a folder on disk.", 3000)
             return
 
-        # Target: if a component is selected, attach into that component's folder;
-        # otherwise, attach into the project folder root.
-        attachments_dir = project_folder
         try:
             selected = self._project_pane.selected_item()
         except Exception:
             selected = None
-        if selected is not None:
-            sel_path, sel_kind = selected
-            if sel_kind == "component" and sel_path:
-                parent_dir = Path(sel_path).expanduser().parent
-                if parent_dir.exists():
-                    attachments_dir = parent_dir
-        attachments_dir.mkdir(parents=True, exist_ok=True)
+
+        attachments_dir = _resolve_attachment_directory(project_folder, selected)
+        try:
+            attachments_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            attachments_dir = project_folder
+            attachments_dir.mkdir(parents=True, exist_ok=True)
 
         def _unique(dest_dir: Path, name: str) -> Path:
             base = Path(name).name
@@ -1018,7 +1099,10 @@ class MainWindow(QMainWindow):
                     return cand
                 i += 1
 
-        added: list[dict[str, Any]] = []
+        added_attachments: list[dict[str, Any]] = []
+        created_parts: list[Path] = []
+        readme_added = False
+
         for src in files:
             try:
                 source = Path(src).expanduser().resolve(strict=True)
@@ -1032,32 +1116,129 @@ class MainWindow(QMainWindow):
             except OSError:
                 continue
             ctype, _ = mimetypes.guess_type(str(dest))
+            rel_path = None
+            try:
+                rel_path = str(dest.relative_to(project_folder))
+            except Exception:
+                rel_path = None
+
+            if _is_readme_candidate(dest):
+                readme_added = True
+                continue
+
+            suffix = dest.suffix.casefold()
+            if suffix in SUPPORTED_EXTENSIONS:
+                created_parts.append(dest)
+                continue
+
             entry = {
                 "path": str(dest),
                 "label": source.name,
                 "content_type": ctype or "application/octet-stream",
             }
-            try:
-                entry["rel_path"] = str(dest.relative_to(project_folder))
-            except Exception:
-                pass
+            if rel_path is not None:
+                entry["rel_path"] = rel_path
             entry["metadata"] = build_attachment_metadata(
                 dest,
                 project_root=project_folder,
                 source_path=source,
             )
-            added.append(entry)
+            added_attachments.append(entry)
 
-        if not added:
-            self.statusBar().showMessage("No attachments were added.", 3000)
+        if not added_attachments and not created_parts and not readme_added:
+            self.statusBar().showMessage("No files were uploaded.", 3000)
+            return
+
+        refreshed = asset
+        if added_attachments:
+            meta = dict(asset.metadata or {})
+            existing = list(meta.get("attachments") or [])
+            meta["attachments"] = existing + added_attachments
+            refreshed = self._asset_service.update_asset(asset.id, metadata=meta)
+            self._show_project(refreshed)
+
+        status_bits: list[str] = []
+        if added_attachments:
+            status_bits.append(f"uploaded {len(added_attachments)} file(s)")
+        if created_parts:
+            status_bits.append(f"imported {len(created_parts)} part file(s)")
+        if readme_added:
+            status_bits.append("updated readme")
+        if status_bits:
+            self.statusBar().showMessage(
+                ", ".join(status_bits).capitalize(),
+                4000,
+            )
+
+        if created_parts or readme_added:
+            focus_component = str(created_parts[-1]) if created_parts else None
+            self._create_or_update_project(
+                project_folder,
+                show_project=True,
+                focus_component=focus_component,
+            )
+
+    def _set_primary_component(self, component_path: str) -> None:
+        asset = self._current_asset
+        if asset is None or not isinstance(asset.metadata, dict):
+            self.statusBar().showMessage(
+                "Select a project before setting the primary part.",
+                3000,
+            )
+            return
+
+        project_folder = Path(asset.path).expanduser().resolve()
+        try:
+            candidate = Path(component_path).expanduser().resolve()
+        except Exception:
+            self.statusBar().showMessage(
+                "Unable to resolve the selected component.",
+                3000,
+            )
+            return
+
+        try:
+            candidate.relative_to(project_folder)
+        except Exception:
+            self.statusBar().showMessage(
+                "Component must live inside the project folder.",
+                4000,
+            )
+            return
+
+        part_key = _component_part_key(candidate, project_folder)
+        rel_path = _component_relative_path(candidate, project_folder)
+        if part_key is None or rel_path is None:
+            self.statusBar().showMessage(
+                "Component must live inside the project folder.",
+                4000,
+            )
             return
 
         meta = dict(asset.metadata or {})
-        existing = list(meta.get("attachments") or [])
-        meta["attachments"] = existing + added
-        refreshed = self._asset_service.update_asset(asset.id, metadata=meta)
-        self._show_project(refreshed)
-        self.statusBar().showMessage(f"Added {len(added)} attachment(s)", 4000)
+        raw_map = meta.get("primary_components")
+        primary_map = dict(raw_map) if isinstance(raw_map, dict) else {}
+        primary_map[part_key] = rel_path
+        meta["primary_components"] = primary_map
+        updated = self._asset_service.update_asset(asset.id, metadata=meta)
+        self._current_asset = updated
+
+        try:
+            part_label = candidate.parent.relative_to(project_folder).as_posix()
+        except Exception:
+            part_label = candidate.parent.name
+        if not part_label or part_label == ".":
+            part_label = project_folder.name
+
+        self.statusBar().showMessage(
+            f"Set '{candidate.name}' as the primary model for '{part_label}'.",
+            4000,
+        )
+        self._create_or_update_project(
+            project_folder,
+            show_project=True,
+            focus_component=str(candidate),
+        )
 
     def _organize_parts_into_folders(self) -> None:
         asset = self._current_asset
@@ -1364,23 +1545,12 @@ class MainWindow(QMainWindow):
                 metadata=metadata,
             )
 
-        # Refresh and show the new project
-        self._populate_repository()
-        self._show_project(created)
-        # Optionally select in repository sidebar if visible
-        try:
-            if (
-                getattr(self, "_repo_container", None) is not None
-                and self._repo_container.isVisible()
-            ):
-                for row in range(self._repository_list.count()):
-                    it = self._repository_list.item(row)
-                    raw_path = it.data(Qt.UserRole + 1) or it.text()
-                    if str(raw_path) == str(folder):
-                        self._repository_list.setCurrentItem(it)
-                        break
-        except Exception:
-            pass
+        # Kick off a scan so placeholders and metadata populate immediately.
+        self._create_or_update_project(
+            folder,
+            show_project=True,
+            select_in_repo=True,
+        )
 
     def _create_new_part(self) -> None:
         from PySide6.QtWidgets import QInputDialog, QMessageBox

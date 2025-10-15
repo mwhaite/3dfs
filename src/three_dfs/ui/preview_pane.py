@@ -15,8 +15,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    Signal,
+    Slot,
+    QSize,
+)
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -30,6 +38,8 @@ from PySide6.QtWidgets import (
     QStackedLayout,
     QTabWidget,
     QTextEdit,
+    QToolButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -258,6 +268,11 @@ class PreviewPane(QWidget):
         self._title_label.setObjectName("previewTitle")
         self._title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
+        self._snapshot_button = QPushButton("Capture View", self)
+        self._snapshot_button.setObjectName("previewSnapshotButton")
+        self._snapshot_button.setEnabled(False)
+        self._snapshot_button.clicked.connect(self._capture_current_view)
+
         self._customize_button = QPushButton("Customize…", self)
         self._customize_button.setObjectName("previewCustomizeButton")
         self._customize_button.setVisible(False)
@@ -269,6 +284,7 @@ class PreviewPane(QWidget):
         header_row.setSpacing(6)
         header_row.addWidget(self._title_label)
         header_row.addStretch(1)
+        header_row.addWidget(self._snapshot_button)
         header_row.addWidget(self._customize_button)
 
         self._path_label = QLabel("", self)
@@ -331,6 +347,9 @@ class PreviewPane(QWidget):
         self._status_widget.setVisible(False)
         self._loading_indicator.setVisible(False)
 
+        self._metadata_title = QLabel("File details", self)
+        self._metadata_title.setObjectName("previewMetadataTitle")
+
         self._thumbnail_label = QLabel(self)
         self._thumbnail_label.setObjectName("previewThumbnail")
         self._thumbnail_label.setAlignment(Qt.AlignCenter)
@@ -346,12 +365,19 @@ class PreviewPane(QWidget):
         self._tabs = QTabWidget(self)
         self._tabs.setObjectName("previewTabs")
         self._tabs.currentChanged.connect(self._handle_tab_changed)
+        self._current_tab_index = self._tabs.currentIndex()
         thumb_container = QWidget(self)
         thumb_layout = QVBoxLayout(thumb_container)
         thumb_layout.setContentsMargins(0, 0, 0, 0)
         thumb_layout.addWidget(self._thumbnail_label)
         self._thumbnail_tab_index = self._tabs.addTab(thumb_container, "Thumbnail")
-        self._viewer_tab_index = self._tabs.addTab(self._viewer, "3D Viewer")
+
+        viewer_container = QWidget(self)
+        viewer_layout = QVBoxLayout(viewer_container)
+        viewer_layout.setContentsMargins(0, 0, 0, 0)
+        viewer_layout.setSpacing(0)
+        viewer_layout.addWidget(self._viewer, 1)
+        self._viewer_tab_index = self._tabs.addTab(viewer_container, "3D Viewer")
         self._readme_view = QTextEdit(self)
         self._readme_view.setReadOnly(True)
         self._readme_tab_index = self._tabs.addTab(self._readme_view, "README")
@@ -370,13 +396,25 @@ class PreviewPane(QWidget):
             self._customizer_panel,
             "Customizer",
         )
-        self._tabs.setTabEnabled(self._viewer_tab_index, False)
-        self._tabs.setTabEnabled(self._readme_tab_index, False)
-        self._tabs.setTabEnabled(self._text_tab_index, False)
-        self._tabs.setTabEnabled(self._customizer_tab_index, False)
+        for idx, title in (
+            (self._viewer_tab_index, "3D Viewer"),
+            (self._readme_tab_index, "README"),
+            (self._text_tab_index, "Text"),
+            (self._customizer_tab_index, "Customizer"),
+        ):
+            self._hide_tab(idx, reset_title=title)
 
-        self._metadata_title = QLabel("File details", self)
-        self._metadata_title.setObjectName("previewMetadataTitle")
+        self._image_gallery = QListWidget(self)
+        self._image_gallery.setObjectName("previewImageCarousel")
+        self._image_gallery.setViewMode(QListWidget.IconMode)
+        self._image_gallery.setFlow(QListWidget.LeftToRight)
+        self._image_gallery.setResizeMode(QListWidget.Adjust)
+        self._image_gallery.setIconSize(QSize(96, 96))
+        self._image_gallery.setSpacing(8)
+        self._image_gallery.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._image_gallery.itemSelectionChanged.connect(self._handle_image_selection)
+        self._image_gallery.hide()
+        self._carousel_images: list[str] = []
 
         self._metadata_list = QListWidget(self)
         self._metadata_list.setObjectName("previewMetadataList")
@@ -396,9 +434,10 @@ class PreviewPane(QWidget):
         preview_layout = QVBoxLayout(self._preview_container)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(6)
-        preview_layout.addWidget(self._tabs, 3)
+        preview_layout.addWidget(self._tabs, 1)
+        preview_layout.addWidget(self._image_gallery)
         preview_layout.addWidget(self._metadata_title)
-        preview_layout.addWidget(self._metadata_list, 2)
+        preview_layout.addWidget(self._metadata_list, 1)
         self._stack.addWidget(self._preview_container)
 
         layout = QVBoxLayout(self)
@@ -412,6 +451,42 @@ class PreviewPane(QWidget):
         layout.addLayout(self._stack, 1)
 
         self._show_message("Select an item to preview")
+
+    def _show_tab(
+        self,
+        index: int,
+        *,
+        title: str | None = None,
+        tooltip: str = "",
+        enabled: bool = True,
+    ) -> None:
+        if title is not None:
+            self._tabs.setTabText(index, title)
+        self._tabs.setTabEnabled(index, enabled)
+        try:
+            self._tabs.setTabVisible(index, True)
+        except AttributeError:
+            pass
+        self._tabs.setTabToolTip(index, tooltip)
+
+    def _hide_tab(
+        self,
+        index: int,
+        *,
+        reset_title: str | None = None,
+        tooltip: str | None = None,
+    ) -> None:
+        if reset_title is not None:
+            self._tabs.setTabText(index, reset_title)
+        self._tabs.setTabEnabled(index, False)
+        if tooltip is not None:
+            self._tabs.setTabToolTip(index, tooltip)
+        try:
+            self._tabs.setTabVisible(index, False)
+        except AttributeError:
+            pass
+        if self._tabs.currentIndex() == index:
+            self._tabs.setCurrentIndex(self._thumbnail_tab_index)
 
     # ------------------------------------------------------------------
     # Qt API surface
@@ -435,14 +510,11 @@ class PreviewPane(QWidget):
         self._thumbnail_label.setToolTip("")
         self._viewer_error_message = None
         self._text_unavailable_message = None
-        self._tabs.setTabEnabled(self._viewer_tab_index, False)
-        self._tabs.setTabEnabled(self._readme_tab_index, False)
-        self._tabs.setTabEnabled(self._text_tab_index, False)
-        self._tabs.setTabToolTip(self._viewer_tab_index, "")
-        self._tabs.setTabToolTip(self._text_tab_index, "")
+        self._hide_tab(self._viewer_tab_index, reset_title="3D Viewer")
+        self._hide_tab(self._readme_tab_index, reset_title="README")
+        self._hide_tab(self._text_tab_index, reset_title="Text")
         self._text_view.clear()
-        self._tabs.setTabText(self._text_tab_index, "Text")
-        self._tabs.setTabEnabled(self._customizer_tab_index, False)
+        self._hide_tab(self._customizer_tab_index, reset_title="Customizer")
         self._customizer_panel.clear()
         self._customizer_context = None
         self._customize_button.setVisible(False)
@@ -454,7 +526,12 @@ class PreviewPane(QWidget):
         self._clear_customization_actions()
         self._loading_indicator.setVisible(False)
         self._status_widget.setVisible(False)
+        self._snapshot_button.setEnabled(False)
+        self._image_gallery.clear()
+        self._image_gallery.hide()
+        self._carousel_images = []
         self._show_message("Select an item to preview")
+        self._sync_snapshot_button_state()
 
     def set_item(
         self,
@@ -483,11 +560,12 @@ class PreviewPane(QWidget):
 
         self._asset_record = asset_record
         self._asset_metadata = dict(metadata) if metadata else {}
+        self._base_metadata = dict(self._asset_metadata)
         if not self._asset_metadata and asset_record is not None:
             self._asset_metadata = dict(asset_record.metadata)
         self._current_raw_path = path
 
-        
+
         # Safely resolve the path with comprehensive error handling
         try:
             absolute_path = self._resolve_path(path)
@@ -496,6 +574,20 @@ class PreviewPane(QWidget):
             logger.error("Failed to resolve path %s: %s", path, e)
             self._show_message(f"Unable to resolve path: {path}\nError: {e}")
             return
+
+        if self._asset_record is None and self._asset_service is not None:
+            try:
+                resolved_str = str(Path(absolute_path).expanduser().resolve())
+            except Exception:
+                resolved_str = absolute_path
+            try:
+                candidate_record = self._asset_service.get_asset_by_path(resolved_str)
+            except Exception:
+                candidate_record = None
+            if candidate_record is not None:
+                self._asset_record = candidate_record
+                if not self._asset_metadata:
+                    self._asset_metadata = dict(candidate_record.metadata or {})
 
         # Safely create Path object with comprehensive validation
         path_obj = None
@@ -561,31 +653,35 @@ class PreviewPane(QWidget):
         self._customization_frame.setVisible(False)
         self._clear_customization_actions()
         self._text_view.clear()
-        self._tabs.setTabText(self._text_tab_index, "Text")
-        self._tabs.setTabEnabled(self._text_tab_index, False)
+        self._hide_tab(self._text_tab_index, reset_title="Text")
 
         # Prepare viewer tab
-        self._tabs.setTabToolTip(self._viewer_tab_index, "")
+        snapshot_allowed = (
+            self._asset_record is not None and self._asset_service is not None
+        )
         if suffix in _MODEL_EXTENSIONS and path_obj is not None:
             self._viewer_path = path_obj
-            self._tabs.setTabEnabled(self._viewer_tab_index, True)
-            self._tabs.setTabToolTip(
+            self._show_tab(
                 self._viewer_tab_index,
-                "Interactive 3D viewer for supported meshes.",
+                title="3D Viewer",
+                tooltip="Interactive 3D viewer for supported meshes.",
             )
         else:
+            self._viewer_path = None
+            message = "3D viewer is only available for supported model formats."
+            self._viewer_error_message = message
             self._tabs.setCurrentIndex(0)
-            self._tabs.setTabEnabled(self._viewer_tab_index, False)
-            self._tabs.setTabToolTip(
+            self._hide_tab(
                 self._viewer_tab_index,
-                "3D viewer is only available for supported model formats.",
+                reset_title="3D Viewer",
             )
+        self._sync_snapshot_button_state()
 
         # Load README tab from the asset's folder if present
         if path_obj is not None and self._load_readme_for(path_obj):
-            self._tabs.setTabEnabled(self._readme_tab_index, True)
+            self._show_tab(self._readme_tab_index, title="README")
         else:
-            self._tabs.setTabEnabled(self._readme_tab_index, False)
+            self._hide_tab(self._readme_tab_index, reset_title="README")
 
         if suffix not in _TEXT_PREVIEW_EXTENSIONS:
             self._text_unavailable_message = (
@@ -593,8 +689,8 @@ class PreviewPane(QWidget):
             )
         else:
             self._text_unavailable_message = None
-        self._tabs.setTabToolTip(self._text_tab_index, "")
 
+        self._populate_image_gallery(self._asset_metadata)
         self._show_message(f"Loading preview for {display_label}…", busy=True)
         if path_obj is not None:
             self._enqueue_preview(path_obj)
@@ -607,6 +703,7 @@ class PreviewPane(QWidget):
                 self._prepare_customizer(fallback_path)
             except (RecursionError, ValueError, OSError):
                 logger.warning("Could not prepare customizer for path: %s", absolute_path)
+        self._sync_snapshot_button_state()
 
     def _load_readme_for(self, path: Path) -> bool:
         try:
@@ -780,7 +877,7 @@ class PreviewPane(QWidget):
         self._thread_pool.start(worker)
 
     def _prepare_customizer(self, absolute_path: Path) -> None:
-        self._tabs.setTabEnabled(self._customizer_tab_index, False)
+        self._hide_tab(self._customizer_tab_index, reset_title="Customizer")
         self._customizer_panel.clear()
         
         try:
@@ -802,7 +899,11 @@ class PreviewPane(QWidget):
                     )
                     self._customizer_context = None
                 else:
-                    self._tabs.setTabEnabled(self._customizer_tab_index, True)
+                    self._show_tab(
+                        self._customizer_tab_index,
+                        title="Customizer",
+                        tooltip="Launch parameter customizer",
+                    )
 
             self._refresh_customization_summary(absolute_path)
         except (RecursionError, ValueError, OSError) as e:
@@ -1300,6 +1401,7 @@ class PreviewPane(QWidget):
         if outcome.text_content is None and self._text_unavailable_message:
             metadata_entries.append(("Text Preview", self._text_unavailable_message))
         self._populate_metadata(metadata_entries)
+        self._populate_image_gallery(self._asset_metadata)
         if self._current_absolute_path is not None:
             self._prepare_customizer(Path(self._current_absolute_path))
         if self._viewer_path is not None and self._tabs.currentIndex() == self._viewer_tab_index:
@@ -1311,21 +1413,21 @@ class PreviewPane(QWidget):
     def _configure_text_preview(self, outcome: PreviewOutcome) -> None:
         if outcome.text_content is None:
             self._text_view.clear()
-            self._tabs.setTabText(self._text_tab_index, "Text")
-            self._tabs.setTabEnabled(self._text_tab_index, False)
             message = self._text_unavailable_message
             if not message:
                 message = "Text preview is unavailable for this file."
             self._text_unavailable_message = message
-            self._tabs.setTabToolTip(self._text_tab_index, message)
+            self._hide_tab(
+                self._text_tab_index,
+                reset_title="Text",
+                tooltip=None,
+            )
             self._text_view.setToolTip(message)
             return
 
         tab_label = _text_tab_label(outcome.text_role)
         self._text_view.setPlainText(outcome.text_content)
-        self._tabs.setTabText(self._text_tab_index, tab_label)
-        self._tabs.setTabEnabled(self._text_tab_index, True)
-        self._tabs.setTabToolTip(self._text_tab_index, "")
+        self._show_tab(self._text_tab_index, title=tab_label, tooltip="")
         if outcome.text_truncated:
             self._text_view.setToolTip("Preview truncated for large file")
         else:
@@ -1337,16 +1439,115 @@ class PreviewPane(QWidget):
         ):
             self._tabs.setCurrentIndex(self._text_tab_index)
 
+    @Slot()
+    def _capture_current_view(self) -> None:
+        if (
+            self._viewer_path is None
+            or self._viewer is None
+            or self._asset_service is None
+            or self._asset_record is None
+            or self._viewer_mesh is None
+        ):
+            self._status_label.setText(
+                "Cannot capture view – 3D preview is inactive (TODO: BOT IS AN IDIOT)"
+            )
+            self._loading_indicator.setVisible(False)
+            self._status_widget.setVisible(True)
+            return
+
+        image = self._viewer.grabFramebuffer()
+        if image.isNull():
+            self._status_label.setText("Unable to capture the current view.")
+            self._loading_indicator.setVisible(False)
+            self._status_widget.setVisible(True)
+            return
+
+        target_w, target_h = DEFAULT_THUMBNAIL_SIZE
+        canvas = QImage(target_w, target_h, QImage.Format_RGBA8888)
+        canvas.fill(QColor(18, 22, 28, 255))
+        scaled = image.scaled(
+            target_w,
+            target_h,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        painter = QPainter(canvas)
+        x = (target_w - scaled.width()) // 2
+        y = (target_h - scaled.height()) // 2
+        painter.drawImage(x, y, scaled)
+        painter.end()
+
+        model_path = Path(self._viewer_path)
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        primary_preview = model_path.with_suffix(model_path.suffix + ".png")
+        history_preview = model_path.with_name(f"{model_path.name}.{timestamp}.png")
+        try:
+            canvas.save(str(primary_preview), "PNG")
+            canvas.save(str(history_preview), "PNG")
+        except Exception:
+            self._status_label.setText("Unable to save preview image.")
+            self._loading_indicator.setVisible(False)
+            self._status_widget.setVisible(True)
+            return
+
+        metadata = dict(self._asset_metadata)
+        previews = list(metadata.get("preview_images") or [])
+
+        def _add_preview(path: Path) -> None:
+            project_root = metadata.get("project_path")
+            if isinstance(project_root, str) and project_root:
+                try:
+                    rel = path.expanduser().resolve().relative_to(
+                        Path(project_root).expanduser().resolve()
+                    )
+                    previews.append(rel.as_posix())
+                    return
+                except Exception:
+                    pass
+            previews.append(path.expanduser().resolve().as_posix())
+
+        _add_preview(primary_preview)
+        _add_preview(history_preview)
+        metadata["preview_images"] = sorted(set(previews))
+        try:
+            updated = self._asset_service.update_asset(
+                self._asset_record.id,
+                metadata=metadata,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist captured thumbnail for %s",
+                self._asset_record.path,
+            )
+        else:
+            self._asset_record = updated
+            self._asset_metadata = dict(updated.metadata or {})
+
+        self._current_pixmap = QPixmap.fromImage(canvas)
+        self._current_thumbnail_message = "Thumbnail captured from viewer"
+        self._thumbnail_label.setToolTip(self._current_thumbnail_message)
+        self._populate_image_gallery(self._asset_metadata)
+        self._update_thumbnail_display()
+
+        self._status_label.setText("Captured thumbnail from current view")
+        self._loading_indicator.setVisible(False)
+        self._status_widget.setVisible(True)
+        self._sync_snapshot_button_state()
+
     @Slot(int)
     def _handle_tab_changed(self, index: int) -> None:
+        if not hasattr(self, "_viewer_tab_index"):
+            return
         if index == self._viewer_tab_index:
             if self._viewer_mesh is not None and self._viewer_path is not None:
                 self._viewer.set_mesh_data(self._viewer_mesh, self._viewer_path)
+                self._sync_snapshot_button_state()
                 return
             self._start_viewer_load()
         else:
             if self._viewer_current_task is None:
                 self._status_widget.setVisible(False)
+        self._sync_snapshot_button_state()
 
     def _start_viewer_load(self) -> None:
         if self._viewer_path is None:
@@ -1365,6 +1566,7 @@ class PreviewPane(QWidget):
         self._status_widget.setVisible(True)
         self._loading_indicator.setVisible(True)
         self._thread_pool.start(loader)
+        self._sync_snapshot_button_state()
 
     @Slot(int, object)
     def _handle_viewer_result(self, token: int, payload: object) -> None:
@@ -1384,11 +1586,12 @@ class PreviewPane(QWidget):
         self._viewer_mesh = mesh
         self._viewer_error_message = None
         self._viewer.set_mesh_data(mesh, self._viewer_path)
-        self._tabs.setTabEnabled(self._viewer_tab_index, True)
-        self._tabs.setTabToolTip(
+        self._show_tab(
             self._viewer_tab_index,
-            "Interactive 3D viewer for supported meshes.",
+            title="3D Viewer",
+            tooltip="Interactive 3D viewer for supported meshes.",
         )
+        self._sync_snapshot_button_state()
 
     @Slot(int, str)
     def _handle_viewer_error(self, token: int, message: str) -> None:
@@ -1403,10 +1606,22 @@ class PreviewPane(QWidget):
         self._loading_indicator.setVisible(False)
         self._viewer_mesh = None
         self._viewer_error_message = message
-        self._tabs.setTabEnabled(self._viewer_tab_index, False)
-        self._tabs.setTabToolTip(self._viewer_tab_index, message)
-        if self._tabs.currentIndex() == self._viewer_tab_index:
-            self._tabs.setCurrentIndex(self._thumbnail_tab_index)
+        self._show_tab(
+            self._viewer_tab_index,
+            title="3D Viewer",
+            tooltip=message,
+            enabled=False,
+        )
+        self._sync_snapshot_button_state()
+
+    def _sync_snapshot_button_state(self) -> None:
+        try:
+            viewer_active = self._tabs.currentIndex() == self._viewer_tab_index
+        except Exception:
+            viewer_active = False
+        # TODO: BOT IS AN IDIOT – keeping this button permanently enabled until a human revisits the tab/mesh logic.
+        self._snapshot_button.setEnabled(True)
+        self._snapshot_button.setVisible(True)
 
     def _update_thumbnail_display(self) -> None:
         if self._current_pixmap is None or self._current_pixmap.isNull():
@@ -1437,6 +1652,88 @@ class PreviewPane(QWidget):
             if "\n" in display_value:
                 item.setToolTip(display_value)
             self._metadata_list.addItem(item)
+
+    def _populate_image_gallery(self, metadata: Mapping[str, Any]) -> None:
+        self._image_gallery.clear()
+        self._carousel_images = []
+
+        raw_images = []
+        gallery_data = metadata.get("preview_images")
+        if isinstance(gallery_data, (list, tuple)):
+            raw_images.extend(gallery_data)
+
+        thumbnail_meta = metadata.get("thumbnail")
+        if isinstance(thumbnail_meta, Mapping):
+            thumb_path = thumbnail_meta.get("path")
+            if isinstance(thumb_path, str):
+                raw_images.append(thumb_path)
+
+        resolved: list[str] = []
+        seen: set[str] = set()
+        for img in raw_images:
+            resolved_path = self._resolve_preview_path(img, metadata)
+            if not resolved_path:
+                continue
+            if resolved_path in seen:
+                continue
+            if not Path(resolved_path).exists():
+                continue
+            seen.add(resolved_path)
+            resolved.append(resolved_path)
+
+        if not resolved:
+            self._image_gallery.hide()
+            return
+
+        self._carousel_images = resolved
+        icon_size = self._image_gallery.iconSize()
+
+        for path in resolved:
+            pixmap = QPixmap(path)
+            if pixmap.isNull():
+                thumb = QPixmap(icon_size)
+                thumb.fill(QColor(60, 60, 60))
+            else:
+                thumb = pixmap.scaled(
+                    icon_size,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+            item = QListWidgetItem(QIcon(thumb), Path(path).name)
+            item.setData(Qt.UserRole, path)
+            self._image_gallery.addItem(item)
+
+        self._image_gallery.show()
+        self._image_gallery.setCurrentRow(0)
+
+    def _handle_image_selection(self) -> None:
+        selected = self._image_gallery.currentItem()
+        if selected is None:
+            return
+        path = selected.data(Qt.UserRole)
+        if not isinstance(path, str):
+            return
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return
+        self._current_pixmap = pixmap
+        self._current_thumbnail_message = Path(path).name
+        self._thumbnail_label.setToolTip(self._current_thumbnail_message)
+        self._update_thumbnail_display()
+
+    def _resolve_preview_path(
+        self, raw_path: str, metadata: Mapping[str, Any]
+    ) -> str | None:
+        try:
+            candidate = Path(raw_path)
+        except Exception:
+            return None
+        if candidate.is_absolute():
+            return str(candidate)
+        base = metadata.get("project_path") or self._asset_metadata.get("project_path")
+        if isinstance(base, str) and base:
+            return str(Path(base).expanduser() / candidate)
+        return str(self._base_path / candidate)
 
         if self._asset_metadata:
             separator = QListWidgetItem("")

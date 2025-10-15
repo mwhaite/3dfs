@@ -45,10 +45,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..thumbnails import ThumbnailCache, ThumbnailGenerationError
+from ..storage import AssetService
 from .preview_pane import PreviewPane
 
 _METADATA_ROLE = Qt.UserRole + 2
 _ASSET_ID_ROLE = Qt.UserRole + 3
+_PRIMARY_ROLE = Qt.UserRole + 4
 
 
 @dataclass(slots=True)
@@ -80,8 +82,14 @@ class ProjectPane(QWidget):
     navigateToPathRequested = Signal(str)
     newPartRequested = Signal()
     refreshRequested = Signal()
+    setPrimaryComponentRequested = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        asset_service: AssetService | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._title = QLabel("Project", self)
@@ -110,7 +118,7 @@ class ProjectPane(QWidget):
         )
         self._components.itemActivated.connect(self._handle_component_activated)
 
-        self._preview = PreviewPane(parent=self)
+        self._preview = PreviewPane(parent=self, asset_service=asset_service)
 
         splitter = QSplitter(self)
         splitter.addWidget(self._components)
@@ -128,12 +136,12 @@ class ProjectPane(QWidget):
         self._btn_refresh = QPushButton("Refresh", self)
         self._btn_refresh.setToolTip("Rescan this project folder")
         self._btn_refresh.clicked.connect(self.refreshRequested)
-        self._btn_add_attachments = QPushButton("Add Attachment(s)", self)
+        self._btn_add_attachments = QPushButton("Upload File(s)", self)
         self._btn_add_attachments.clicked.connect(self.addAttachmentsRequested)
         self._btn_open_folder = QPushButton("Open Folder", self)
         self._btn_open_folder.clicked.connect(self.openFolderRequested)
         self._search = QLineEdit(self)
-        self._search.setPlaceholderText("Search parts and attachments…  (Ctrl+F)")
+        self._search.setPlaceholderText("Search parts and uploads…  (Ctrl+F)")
         self._search.textChanged.connect(self._apply_filter)
         actions_row.addWidget(self._btn_up)
         actions_row.addWidget(self._btn_refresh)
@@ -176,14 +184,40 @@ class ProjectPane(QWidget):
         self._btn_up.setEnabled(enable_actions)
         self._components.clear()
         self._search.clear()
+        components = list(components)
+        placeholder_keys: set[str] = set()
+        for comp in components:
+            if comp.kind != "placeholder":
+                continue
+            meta = comp.metadata or {}
+            part_key = meta.get("part_key")
+            if isinstance(part_key, str) and part_key:
+                placeholder_keys.add(part_key)
+
         comp_paths: list[str] = []
         arrangement_paths: list[str] = []
         attach_paths: list[str] = []
         for comp in components:
+            comp_meta = comp.metadata or {}
+            if (
+                comp.kind == "component"
+                and placeholder_keys
+                and comp_meta.get("is_primary_component")
+            ):
+                part_key = comp_meta.get("part_key")
+                if isinstance(part_key, str) and part_key in placeholder_keys:
+                    continue
+
             item = QListWidgetItem(comp.label or comp.path)
             item.setData(Qt.UserRole, comp.path)
             item.setData(Qt.UserRole + 1, comp.kind)
-            item.setData(_METADATA_ROLE, comp.metadata or None)
+            item.setData(_METADATA_ROLE, comp_meta or None)
+            is_primary = bool(comp_meta.get("is_primary_component"))
+            item.setData(_PRIMARY_ROLE, is_primary)
+            if is_primary:
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
             if comp.asset_id is not None:
                 item.setData(_ASSET_ID_ROLE, comp.asset_id)
             item.setToolTip(comp.path)
@@ -207,6 +241,7 @@ class ProjectPane(QWidget):
                 item.setData(Qt.UserRole, arrangement.path)
                 item.setData(Qt.UserRole + 1, "arrangement")
                 item.setData(_METADATA_ROLE, arrangement.metadata or None)
+                item.setData(_PRIMARY_ROLE, False)
                 tooltip_parts = []
                 if arrangement.description:
                     tooltip_parts.append(str(arrangement.description))
@@ -219,7 +254,7 @@ class ProjectPane(QWidget):
 
         attachments = list(attachments)
         if attachments:
-            header = QListWidgetItem("Attachments")
+            header = QListWidgetItem("Uploaded Files")
             font = header.font()
             font.setBold(True)
             header.setFont(font)
@@ -231,6 +266,7 @@ class ProjectPane(QWidget):
                 item.setData(Qt.UserRole, att.path)
                 item.setData(Qt.UserRole + 1, att.kind)
                 item.setData(_METADATA_ROLE, att.metadata or None)
+                item.setData(_PRIMARY_ROLE, False)
                 item.setToolTip(att.path)
                 self._components.addItem(item)
                 attach_paths.append(att.path)
@@ -257,8 +293,15 @@ class ProjectPane(QWidget):
         comp_path = str(current.data(Qt.UserRole) or current.text())
         metadata_obj = current.data(_METADATA_ROLE)
         metadata = metadata_obj if isinstance(metadata_obj, dict) else None
+        kind_value = current.data(Qt.UserRole + 1)
+        kind = str(kind_value or "component").strip().casefold()
+        preview_path = comp_path
+        if kind == "placeholder" and metadata is not None:
+            primary_path = metadata.get("primary_component_path")
+            if isinstance(primary_path, str) and primary_path.strip():
+                preview_path = primary_path.strip()
         self._preview.set_item(
-            comp_path,
+            preview_path,
             label=current.text(),
             metadata=metadata,
             asset_record=None,
@@ -375,8 +418,17 @@ class ProjectPane(QWidget):
         has_project = bool(self._project_path)
         new_part_act = menu.addAction("New Part…")
         new_part_act.setEnabled(has_project)
-        add_act = menu.addAction("Add Attachment(s) Here…")
+        add_act = menu.addAction("Upload File(s) Here…")
         add_act.setEnabled(has_project)
+        set_primary_act = None
+        if item is not None:
+            raw_kind = item.data(Qt.UserRole + 1)
+            kind = str(raw_kind or "component").strip().casefold()
+            if kind == "component":
+                set_primary_act = menu.addAction("Set as Part")
+                set_primary_act.setEnabled(
+                    has_project and not bool(item.data(_PRIMARY_ROLE))
+                )
         open_item_act = menu.addAction("Open Item")
         open_item_act.setEnabled(self._can_open_with_handler(item))
         open_project_act = menu.addAction("Open Project")
@@ -405,6 +457,10 @@ class ProjectPane(QWidget):
             self.newPartRequested.emit()
         elif action == add_act:
             self.addAttachmentsRequested.emit()
+        elif set_primary_act is not None and action == set_primary_act:
+            target = str(item.data(Qt.UserRole) or "").strip() if item is not None else ""
+            if target:
+                self.setPrimaryComponentRequested.emit(target)
         elif action == open_item_act:
             self._open_component_with_handler(item)
         elif action == open_project_act:

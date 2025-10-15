@@ -43,6 +43,8 @@ layout(location = 1) in vec3 normal;
 uniform mat4 u_mvp;
 uniform mat4 u_model;
 uniform vec3 u_lightDir;
+uniform vec3 u_fillDir;
+uniform float u_ambient;
 
 out vec3 v_normal;
 out float v_lighting;
@@ -51,7 +53,9 @@ void main() {
     gl_Position = u_mvp * vec4(position, 1.0);
     vec3 n = normalize((u_model * vec4(normal, 0.0)).xyz);
     v_normal = n;
-    v_lighting = max(dot(n, normalize(u_lightDir)), 0.1);
+    float key = max(dot(n, normalize(u_lightDir)), 0.0);
+    float fill = max(dot(n, normalize(u_fillDir)), 0.0) * 0.5;
+    v_lighting = max(u_ambient, key + fill);
 }
 """
 
@@ -63,8 +67,8 @@ in float v_lighting;
 out vec4 fragColor;
 
 void main() {
-    vec3 base = vec3(0.45, 0.65, 0.85);
-    vec3 color = base * v_lighting;
+    vec3 base = vec3(0.60, 0.80, 1.00);
+    vec3 color = base * clamp(v_lighting, 0.0, 1.6);
     fragColor = vec4(color, 1.0);
 }
 """
@@ -414,6 +418,10 @@ class ModelViewer(QOpenGLWidget):
         self._program.setUniformValue("u_mvp", mvp)
         self._program.setUniformValue("u_model", model)
         self._program.setUniformValue("u_lightDir", 0.45, 0.55, 0.7)
+        self._program.setUniformValue("u_fillDir", -0.6, -0.35, 0.4)
+        ambient_loc = self._program.uniformLocation("u_ambient")
+        if ambient_loc != -1:
+            self._program.setUniformValue(ambient_loc, 0.35)
 
         # Upload buffers on each paint for simplicity (small meshes typical)
         vertices = self._mesh.vertices.astype(np.float32)
