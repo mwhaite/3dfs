@@ -1424,15 +1424,69 @@ class MainWindow(QMainWindow):
                 break
 
     def _handle_preview_navigation(self, target: str) -> None:
-        path = Path(target)
-        if path.is_dir():
-            self._create_or_update_project(path, show_project=True, select_in_repo=True)
-            asset = self._asset_service.get_asset_by_path(str(path))
+        if not target:
+            return
+        try:
+            raw_path = Path(target)
+        except Exception:
+            raw_path = Path(str(target))
+
+        try:
+            normalized = raw_path.expanduser().resolve(strict=False)
+        except Exception:
+            normalized = raw_path
+
+        normalized_str = str(normalized)
+
+        if normalized.is_dir():
+            self._create_or_update_project(
+                normalized, show_project=True, select_in_repo=True
+            )
+            asset = self._asset_service.get_asset_by_path(normalized_str)
             if asset is not None:
                 self._show_project(asset)
             return
-        asset = self._asset_service.get_asset_by_path(str(path))
+
+        asset = self._asset_service.get_asset_by_path(normalized_str)
+        if asset is None and normalized_str != str(raw_path):
+            asset = self._asset_service.get_asset_by_path(str(raw_path))
+
         if asset is not None:
+            try:
+                asset_path_obj = Path(asset.path).expanduser().resolve(strict=False)
+            except Exception:
+                asset_path_obj = Path(asset.path).expanduser()
+
+            library_root = get_config().library_root
+            inside_library = False
+            try:
+                parent_dir = asset_path_obj.parent
+            except Exception:
+                parent_dir = None
+
+            if parent_dir is not None:
+                try:
+                    parent_dir.relative_to(library_root)
+                except Exception:
+                    inside_library = False
+                else:
+                    inside_library = True
+
+            if inside_library and parent_dir is not None:
+                self._create_or_update_project(
+                    parent_dir,
+                    select_in_repo=True,
+                    focus_component=str(asset_path_obj),
+                    show_project=True,
+                )
+                self._select_repository_path(str(parent_dir))
+                try:
+                    self._project_pane.select_item(str(asset_path_obj))
+                except Exception:
+                    pass
+            else:
+                self._select_repository_path(asset.path)
+
             self._preview_pane.set_item(
                 asset.path,
                 label=asset.label,
@@ -1442,6 +1496,18 @@ class MainWindow(QMainWindow):
             self._detail_stack.setCurrentWidget(self._preview_pane)
             self._current_asset = asset
             self._update_project_watchers()
+            return
+
+        fallback_path = normalized_str or str(raw_path)
+        display_label = Path(fallback_path).name or fallback_path
+        self._preview_pane.set_item(
+            fallback_path,
+            label=display_label,
+            metadata=None,
+            asset_record=None,
+        )
+        self._detail_stack.setCurrentWidget(self._preview_pane)
+        self._current_asset = None
 
     def _handle_customization_generated(self, result: PipelineResult) -> None:
         asset_path = result.output_path

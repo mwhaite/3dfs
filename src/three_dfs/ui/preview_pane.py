@@ -826,11 +826,51 @@ class PreviewPane(QWidget):
         except Exception:
             return False
 
+    def _normalize_path(self, path_str: str | None) -> str | None:
+        if not isinstance(path_str, str):
+            return None
+        candidate = path_str.strip()
+        if not candidate:
+            return None
+        if not self._is_safe_path_string(candidate):
+            return None
+        try:
+            return str(Path(candidate).expanduser().resolve(strict=False))
+        except Exception:
+            return candidate
+
+    def _resolve_model_path(
+        self, raw_path: str, metadata: Mapping[str, Any]
+    ) -> str | None:
+        if not isinstance(raw_path, str):
+            return None
+        cleaned = raw_path.strip()
+        if not cleaned:
+            return None
+        if not self._is_safe_path_string(cleaned):
+            return None
+        try:
+            candidate = Path(cleaned)
+        except Exception:
+            return self._normalize_path(cleaned)
+        if candidate.is_absolute():
+            return self._normalize_path(str(candidate))
+        base = metadata.get("project_path") or self._asset_metadata.get("project_path")
+        if isinstance(base, str) and base.strip():
+            try:
+                return self._normalize_path(str(Path(base).expanduser() / candidate))
+            except Exception:
+                pass
+        try:
+            return self._normalize_path(str((self._base_path / candidate).expanduser()))
+        except Exception:
+            return self._normalize_path(str(candidate))
+
     def _resolve_path(self, raw_path: str) -> str:
         """Resolve a path string to an absolute path."""
         # At this point, the path has already been validated by _is_safe_path_string
         normalized = raw_path.replace('\\', '/')
-        
+
         if normalized.startswith('/'):
             return normalized
         else:
@@ -1657,20 +1697,83 @@ class PreviewPane(QWidget):
         self._image_gallery.clear()
         self._carousel_images = []
 
-        raw_images = []
+        raw_images: list[str] = []
+        image_target_map: dict[str, str] = {}
+        image_label_map: dict[str, str] = {}
+
+        current_target: str | None = None
+        for candidate in (
+            metadata.get("asset_path"),
+            self._current_absolute_path,
+            self._current_raw_path,
+        ):
+            normalized = self._normalize_path(candidate if isinstance(candidate, str) else None)
+            if normalized:
+                current_target = normalized
+                break
+
+        current_label = metadata.get("asset_label")
+        if not isinstance(current_label, str) or not current_label.strip():
+            current_label = None
+
         gallery_data = metadata.get("preview_images")
-        if isinstance(gallery_data, (list, tuple)):
-            raw_images.extend(gallery_data)
+        if isinstance(gallery_data, (list, tuple, set)):
+            for entry in gallery_data:
+                if not isinstance(entry, str):
+                    continue
+                raw_images.append(entry)
+                if current_target:
+                    image_target_map.setdefault(entry, current_target)
+                if current_label:
+                    image_label_map.setdefault(entry, current_label.strip())
 
         thumbnail_meta = metadata.get("thumbnail")
         if isinstance(thumbnail_meta, Mapping):
             thumb_path = thumbnail_meta.get("path")
             if isinstance(thumb_path, str):
                 raw_images.append(thumb_path)
+                if current_target:
+                    image_target_map.setdefault(thumb_path, current_target)
+                if current_label:
+                    image_label_map.setdefault(thumb_path, current_label.strip())
+
+        models_data = metadata.get("models")
+        if isinstance(models_data, Iterable):
+            for entry in models_data:
+                if not isinstance(entry, Mapping):
+                    continue
+                model_path = entry.get("path")
+                resolved_model = (
+                    self._resolve_model_path(model_path, metadata)
+                    if isinstance(model_path, str)
+                    else None
+                )
+                if not resolved_model:
+                    continue
+                previews = entry.get("preview_images")
+                if not isinstance(previews, (list, tuple, set)):
+                    continue
+                raw_label = entry.get("label")
+                if isinstance(raw_label, str) and raw_label.strip():
+                    label_text = raw_label.strip()
+                else:
+                    label_text = Path(resolved_model).name
+                for preview in previews:
+                    if not isinstance(preview, str):
+                        continue
+                    raw_images.append(preview)
+                    image_target_map[preview] = resolved_model
+                    if label_text:
+                        image_label_map[preview] = label_text
 
         resolved: list[str] = []
+        resolved_targets: dict[str, str] = {}
+        resolved_labels: dict[str, str] = {}
         seen: set[str] = set()
+
         for img in raw_images:
+            if not isinstance(img, str):
+                continue
             resolved_path = self._resolve_preview_path(img, metadata)
             if not resolved_path:
                 continue
@@ -1680,6 +1783,12 @@ class PreviewPane(QWidget):
                 continue
             seen.add(resolved_path)
             resolved.append(resolved_path)
+            target_candidate = image_target_map.get(img)
+            if target_candidate:
+                resolved_targets[resolved_path] = target_candidate
+            label_candidate = image_label_map.get(img)
+            if label_candidate:
+                resolved_labels[resolved_path] = label_candidate
 
         if not resolved:
             self._image_gallery.hide()
@@ -1699,8 +1808,17 @@ class PreviewPane(QWidget):
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
                 )
-            item = QListWidgetItem(QIcon(thumb), Path(path).name)
+            display_label = resolved_labels.get(path) or Path(path).name
+            item = QListWidgetItem(QIcon(thumb), display_label)
             item.setData(Qt.UserRole, path)
+            target = resolved_targets.get(path)
+            if target:
+                item.setData(Qt.UserRole + 1, target)
+                tooltip_lines = [display_label]
+                tooltip_lines.append(target)
+                item.setToolTip("\n".join(tooltip_lines))
+            else:
+                item.setToolTip(Path(path).name)
             self._image_gallery.addItem(item)
 
         self._image_gallery.show()
@@ -1716,10 +1834,27 @@ class PreviewPane(QWidget):
         pixmap = QPixmap(path)
         if pixmap.isNull():
             return
+        display_label = selected.text() or Path(path).name
         self._current_pixmap = pixmap
-        self._current_thumbnail_message = Path(path).name
-        self._thumbnail_label.setToolTip(self._current_thumbnail_message)
+        self._current_thumbnail_message = display_label
+        self._thumbnail_label.setToolTip(display_label)
         self._update_thumbnail_display()
+
+        target_data = selected.data(Qt.UserRole + 1)
+        target_path = target_data if isinstance(target_data, str) else None
+        normalized_target = self._normalize_path(target_path)
+        if not normalized_target:
+            return
+
+        current_candidates = [
+            self._normalize_path(self._current_absolute_path),
+            self._normalize_path(self._current_raw_path),
+            self._normalize_path(self._asset_metadata.get("asset_path")),
+        ]
+        if normalized_target in {candidate for candidate in current_candidates if candidate}:
+            return
+
+        self.navigationRequested.emit(normalized_target)
 
     def _resolve_preview_path(
         self, raw_path: str, metadata: Mapping[str, Any]
