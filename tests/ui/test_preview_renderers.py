@@ -137,3 +137,69 @@ def test_preview_carousel_image_navigation(qapp, tmp_path):
     assert spy.at(0)[0] == expected_path
 
     preview.deleteLater()
+
+
+def test_preview_carousel_supports_attachment_images(qapp, tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    model_path = project_root / "model_a.stl"
+    model_path.write_text("solid a", encoding="utf-8")
+
+    model_preview = project_root / "model_a.png"
+    attachment_path = project_root / "assembly.jpg"
+
+    image = QImage(32, 32, QImage.Format_ARGB32)
+    image.fill(QColor("green"))
+    image.save(str(model_preview))
+    image.fill(QColor("yellow"))
+    image.save(str(attachment_path))
+
+    metadata = {
+        "project_path": str(project_root),
+        "asset_path": "model_a.stl",
+        "asset_label": "Model A",
+        "preview_images": ["model_a.png"],
+        "models": [
+            {
+                "path": "model_a.stl",
+                "label": "Model A",
+                "preview_images": ["model_a.png"],
+            }
+        ],
+        "attachments": [
+            {
+                "path": "assembly.jpg",
+                "label": "Assembly Diagram",
+                "content_type": "image/jpeg",
+            }
+        ],
+    }
+
+    preview = PreviewPane(base_path=project_root)
+    preview._enqueue_preview = lambda path: None
+    preview._prepare_customizer = lambda path: None
+
+    preview.set_item(
+        "model_a.stl",
+        label="Model A",
+        metadata=metadata,
+        asset_record=None,
+    )
+
+    qapp.processEvents()
+
+    assert preview._image_gallery.count() == 2
+
+    attachment_item = preview._image_gallery.item(1)
+    assert attachment_item.text() == "Assembly Diagram"
+
+    spy = QSignalSpy(preview.navigationRequested)
+    preview._image_gallery.setCurrentRow(1)
+    qapp.processEvents()
+
+    assert spy.count() == 1
+    expected_path = str(attachment_path.expanduser().resolve(strict=False))
+    assert spy.at(0)[0] == expected_path
+
+    preview.deleteLater()

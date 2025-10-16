@@ -1766,6 +1766,57 @@ class PreviewPane(QWidget):
                     if label_text:
                         image_label_map[preview] = label_text
 
+        attachments = metadata.get("attachments")
+        if isinstance(attachments, Iterable):
+            for entry in attachments:
+                if not isinstance(entry, Mapping):
+                    continue
+                attachment_path = entry.get("path")
+                resolved_attachment = (
+                    self._resolve_model_path(attachment_path, metadata)
+                    if isinstance(attachment_path, str)
+                    else None
+                )
+                if not resolved_attachment:
+                    continue
+
+                raw_label = entry.get("label")
+                attachment_label = (
+                    raw_label.strip()
+                    if isinstance(raw_label, str) and raw_label.strip()
+                    else Path(resolved_attachment).name
+                )
+
+                entry_meta = entry.get("metadata")
+                preview_sources: list[str] = []
+                if isinstance(entry_meta, Mapping):
+                    previews = entry_meta.get("preview_images")
+                    if isinstance(previews, (list, tuple, set)):
+                        for preview in previews:
+                            if isinstance(preview, str):
+                                preview_sources.append(preview)
+
+                if not preview_sources:
+                    content_type = entry.get("content_type")
+                    suffix: str | None
+                    try:
+                        suffix = Path(str(attachment_path)).suffix.lower()
+                    except Exception:
+                        suffix = None
+                    is_image = False
+                    if isinstance(content_type, str) and content_type.lower().startswith("image/"):
+                        is_image = True
+                    elif suffix in _IMAGE_EXTENSIONS:
+                        is_image = True
+                    if is_image:
+                        preview_sources.append(str(attachment_path))
+
+                for preview in preview_sources:
+                    raw_images.append(preview)
+                    image_target_map.setdefault(preview, resolved_attachment)
+                    if attachment_label:
+                        image_label_map.setdefault(preview, attachment_label)
+
         resolved: list[str] = []
         resolved_targets: dict[str, str] = {}
         resolved_labels: dict[str, str] = {}
@@ -1784,9 +1835,26 @@ class PreviewPane(QWidget):
             seen.add(resolved_path)
             resolved.append(resolved_path)
             target_candidate = image_target_map.get(img)
+            label_candidate = image_label_map.get(img)
+
+            asset_target: str | None = None
+            asset_label: str | None = None
+            if not target_candidate or not label_candidate:
+                asset_target, asset_label = self._locate_preview_asset(
+                    resolved_path, metadata
+                )
+
+            if not target_candidate:
+                target_candidate = asset_target
+
+            if not label_candidate:
+                label_candidate = asset_label
+
+            if not target_candidate:
+                target_candidate = self._normalize_path(resolved_path)
+
             if target_candidate:
                 resolved_targets[resolved_path] = target_candidate
-            label_candidate = image_label_map.get(img)
             if label_candidate:
                 resolved_labels[resolved_path] = label_candidate
 
@@ -1869,6 +1937,105 @@ class PreviewPane(QWidget):
         if isinstance(base, str) and base:
             return str(Path(base).expanduser() / candidate)
         return str(self._base_path / candidate)
+
+    def _locate_preview_asset(
+        self, resolved_path: str, metadata: Mapping[str, Any]
+    ) -> tuple[str | None, str | None]:
+        normalized_preview = self._normalize_path(resolved_path)
+        service = getattr(self, "_asset_service", None)
+        if service is None:
+            return normalized_preview, None
+
+        candidate_strings: list[str] = []
+        if normalized_preview:
+            candidate_strings.append(normalized_preview)
+        if isinstance(resolved_path, str):
+            candidate_strings.append(resolved_path)
+
+        path_obj: Path | None
+        try:
+            path_obj = Path(resolved_path)
+        except Exception:
+            path_obj = None
+
+        absolute_obj: Path | None = None
+        if path_obj is not None:
+            candidate_strings.append(str(path_obj))
+            try:
+                absolute_obj = path_obj.expanduser().resolve(strict=False)
+            except Exception:
+                try:
+                    absolute_obj = path_obj.expanduser()
+                except Exception:
+                    absolute_obj = None
+            if absolute_obj is not None:
+                candidate_strings.append(str(absolute_obj))
+
+        project_path = metadata.get("project_path")
+        project_root: Path | None = None
+        if isinstance(project_path, str) and project_path.strip():
+            try:
+                project_root = Path(project_path).expanduser().resolve(strict=False)
+            except Exception:
+                try:
+                    project_root = Path(project_path).expanduser()
+                except Exception:
+                    project_root = None
+
+        if absolute_obj is not None and project_root is not None:
+            try:
+                rel = absolute_obj.relative_to(project_root)
+            except Exception:
+                rel = None
+            else:
+                candidate_strings.append(rel.as_posix())
+
+        base_root: Path | None = None
+        try:
+            base_root = self._base_path.expanduser().resolve(strict=False)
+        except Exception:
+            try:
+                base_root = self._base_path.expanduser()
+            except Exception:
+                base_root = None
+
+        if absolute_obj is not None and base_root is not None:
+            try:
+                rel_base = absolute_obj.relative_to(base_root)
+            except Exception:
+                rel_base = None
+            else:
+                candidate_strings.append(rel_base.as_posix())
+
+        seen: set[str] = set()
+        for candidate in candidate_strings:
+            if not isinstance(candidate, str):
+                continue
+            text = candidate.strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            try:
+                asset = service.get_asset_by_path(text)
+            except Exception:
+                continue
+            if asset is None:
+                continue
+            asset_path = getattr(asset, "path", None)
+            if not isinstance(asset_path, str):
+                continue
+            normalized_asset = self._normalize_path(asset_path) or asset_path
+            raw_label = getattr(asset, "label", None)
+            if isinstance(raw_label, str) and raw_label.strip():
+                label = raw_label.strip()
+            else:
+                try:
+                    label = Path(normalized_asset).name
+                except Exception:
+                    label = normalized_asset
+            return normalized_asset, label
+
+        return normalized_preview, None
 
         if self._asset_metadata:
             separator = QListWidgetItem("")
