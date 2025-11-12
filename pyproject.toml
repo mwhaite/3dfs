@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling>=1.21.1"]
+build-backend = "hatchling.build"
+
+[project]
+name = "three-dfs"
+version = "0.1.0"
+description = "Foundational tooling for the 3dfs cross-platform 3D asset explorer."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "3dfs Contributors" }]
+keywords = ["3d", "cad", "explorer", "desktop"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "License :: Other/Proprietary License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+  "PySide6>=6.7",
+  "Pillow>=10.3",
+  "build123d>=0.9",
+  "numpy>=1.26",
+  "SQLAlchemy>=2.0",
+  "trimesh>=4.4",
+  "networkx>=3.2",
+  "lxml>=5.2",
+]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "README.md"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/three_dfs"]
+
+[project.scripts]
+three-dfs = "three_dfs.app:main"
+
+[tool.hatch.envs.default]
+dependencies = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "ruff>=0.4.2",
+  "black>=24.3.0",
+  "SQLAlchemy>=2.0",
+]
+
+[tool.hatch.envs.default.scripts]
+lint = [
+  "ruff check src tests",
+  "black --check src tests",
+]
+test = "pytest --cov=three_dfs --cov-report=term-missing"
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/three_dfs/storage/database.py" = ["E501"]
+"src/three_dfs/storage/part_service.py" = ["E501"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = [
+  "tests",
+]

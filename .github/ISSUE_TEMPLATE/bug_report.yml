@@ -1,0 +1,83 @@
+name: "Bug report"
+description: "Report a reproducible problem in 3DFS"
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for letting us know about a problem! Fill out all required fields so we can help quickly.
+  - type: input
+    id: contact
+    attributes:
+      label: Contact Details
+      description: How can we reach you if we need more info?
+      placeholder: "@github-handle or email"
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Briefly describe the issue.
+      placeholder: "A clear and concise description of what the bug is."
+    validations:
+      required: true
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Step-by-step instructions to trigger the bug.
+      placeholder: |
+        1. Run '...'
+        2. Click '...'
+        3. Bug happens
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+      placeholder: "Describe the expected outcome."
+    validations:
+      required: true
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: Actual behavior
+      description: What actually happened?
+      placeholder: "Describe the current outcome, including error messages."
+    validations:
+      required: true
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Regression
+      description: Did this work in a previous version of 3DFS?
+      options:
+        - "Unknown"
+        - "No, this never worked"
+        - "Yes, it used to work"
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include details such as OS, Python version, install method, and any relevant dependencies.
+      placeholder: |
+        - OS: macOS 14.5
+        - Python: 3.11.4
+        - Installation: pip
+        - Additional context: using Apple Silicon
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs & screenshots
+      description: Paste relevant console output, stack traces, or screenshots.
+      render: shell
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Anything else we should know?

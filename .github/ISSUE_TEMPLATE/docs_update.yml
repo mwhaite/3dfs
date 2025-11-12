@@ -1,0 +1,30 @@
+name: "Docs update"
+description: "Suggest fixes or additions to the documentation"
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us keep the documentation accurate and up to date.
+  - type: input
+    id: location
+    attributes:
+      label: Affected docs
+      description: Which page, section, or file needs attention?
+      placeholder: "e.g., README.md - Installation section"
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: Requested change
+      description: Describe what needs to be updated or clarified.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Share screenshots, links, or references that explain the issue.

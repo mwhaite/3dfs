@@ -1,0 +1,36 @@
+{
+  "app-id": "io.open3dfs.ThreeDFS",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "23.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "three-dfs",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--share=network",
+    "--device=dri",
+    "--env=PYTHONUNBUFFERED=1",
+    "--filesystem=home"
+  ],
+  "modules": [
+    {
+      "name": "three-dfs",
+      "build-options": {
+        "build-args": ["--share=network"]
+      },
+      "buildsystem": "simple",
+      "build-commands": [
+        "pip3 install --no-deps --prefix=/app .",
+        "install -Dm755 packaging/flatpak/three-dfs.sh /app/bin/three-dfs",
+        "install -Dm644 packaging/flatpak/io.open3dfs.ThreeDFS.desktop /app/share/applications/io.open3dfs.ThreeDFS.desktop"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "@SOURCE_DIR@"
+        }
+      ]
+    }
+  ]
+}

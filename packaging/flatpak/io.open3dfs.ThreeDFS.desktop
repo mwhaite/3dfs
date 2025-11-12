@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=3dfs
+GenericName=3D Library Manager
+Comment=Manage 3D model projects and parts
+Exec=three-dfs
+Icon=io.open3dfs.ThreeDFS
+Terminal=false
+Type=Application
+Categories=Graphics;Engineering;
+StartupNotify=true

@@ -1,0 +1,9 @@
+Package: three-dfs
+Version: @VERSION@
+Section: graphics
+Priority: optional
+Architecture: @ARCH@
+Depends: python3 (>= 3.11), python3-pyside6, python3-numpy, python3-trimesh, python3-sqlalchemy, python3-pil
+Maintainer: 3dfs Developers <devnull@example.com>
+Description: 3D asset library manager
+ A desktop shell for managing 3D model projects, previews, and metadata.

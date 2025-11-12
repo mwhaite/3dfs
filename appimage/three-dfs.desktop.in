@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=3dfs
+Comment=Explore and manage 3D asset libraries
+Exec=three-dfs
+Icon=three-dfs
+Categories=Graphics;3DGraphics;
+Terminal=false

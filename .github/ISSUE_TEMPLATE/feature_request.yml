@@ -1,0 +1,36 @@
+name: "Feature request"
+description: "Propose a new idea or enhancement for 3DFS"
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tell us about the new capability you would like to see in 3DFS. Clear use-cases help us plan work.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve?
+      placeholder: "I want to... but currently..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the solution you would like. Include APIs, workflows, or UI mocks if available.
+      placeholder: "Add a command that..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you explored other approaches or workarounds?
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Any extra details, screenshots, or references.
