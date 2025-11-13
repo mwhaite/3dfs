@@ -31,7 +31,8 @@ comments such as `[1:10]` sliders and option lists, maps them into parameter
 metadata, and constructs an `openscad` CLI invocation with the appropriate
 `-D` overrides.  The backend focuses on describing the build; persistence is
 handled by the pipeline which records the parameter schema, normalised values,
-and all produced artefacts.
+and all produced artefacts.  See the [transformation helpers](customizer-transformations.md)
+for reusable mesh operations that backends can compose into build plans.
 
 Practical example sources live in `docs/examples/openscad/`.  They include a
 utility for embossing arbitrary STL files (`emboss_utility.scad`) and a
