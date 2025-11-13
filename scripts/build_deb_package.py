@@ -132,14 +132,26 @@ def main(argv: list[str] | None = None) -> int:
 
     # Install launcher
     launcher_target = staging / "usr" / "bin" / "three-dfs"
-    shutil.copy2(DEB_DIR / "three-dfs.sh", launcher_target)
+    launcher_script = DEB_DIR / "three-dfs.sh"
+    if not launcher_script.exists():
+        raise PackagingError(f"Launcher script not found: {launcher_script}")
+    shutil.copy2(launcher_script, launcher_target)
     launcher_target.chmod(0o755)
 
     # Desktop entry and icon
-    shutil.copy2(DEB_DIR / "three-dfs.desktop", staging / "usr" / "share" / "applications" / "three-dfs.desktop")
-    shutil.copy2(DEB_DIR / "three-dfs.png", staging / "usr" / "share" / "icons" / "hicolor" / "256x256" / "apps" / "three-dfs.png")
+    desktop_file = DEB_DIR / "three-dfs.desktop"
+    if not desktop_file.exists():
+        raise PackagingError(f"Desktop file not found: {desktop_file}")
+    shutil.copy2(desktop_file, staging / "usr" / "share" / "applications" / "three-dfs.desktop")
+    
+    icon_file = DEB_DIR / "three-dfs.png"
+    if not icon_file.exists():
+        raise PackagingError(f"Icon file not found: {icon_file}")
+    shutil.copy2(icon_file, staging / "usr" / "share" / "icons" / "hicolor" / "256x256" / "apps" / "three-dfs.png")
 
     control_path = debian_dir / "control"
+    if not args.control_template.exists():
+        raise PackagingError(f"Control template not found: {args.control_template}")
     _render_control(args.control_template, version, arch, control_path)
 
     dist_dir.mkdir(parents=True, exist_ok=True)

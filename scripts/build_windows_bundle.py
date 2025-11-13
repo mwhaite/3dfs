@@ -72,6 +72,7 @@ def _build_command(
 
     collect_targets: Sequence[str] = (
         "shiboken6",
+        "PySide6",
         "trimesh",
         "build123d",
         "PIL",
@@ -85,6 +86,11 @@ def _build_command(
 
     hidden_imports: Sequence[str] = (
         "OpenGL",
+        "OpenGL.GL",
+        "PySide6.QtCore",
+        "PySide6.QtGui",
+        "PySide6.QtWidgets",
+        "PySide6.QtOpenGL",
     )
     for module in hidden_imports:
         command.extend(("--hidden-import", module))
