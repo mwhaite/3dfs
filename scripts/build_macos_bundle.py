@@ -234,6 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.create_dmg:
         dmG_path = dist_dir / args.dmg_name
         _create_dmg(app_path, dmG_path, volume_name=args.name)
+        if not dmG_path.exists():
+            raise PackagingError(f"DMG was not created at expected path: {dmG_path}")
         print(f"DMG created at {dmG_path}")
 
     print(f"macOS app bundle available at {app_path}")

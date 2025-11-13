@@ -165,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
     if result.returncode != 0:
         raise PackagingError("dpkg-deb failed")
 
+    if not output_deb.exists():
+        raise PackagingError(f"Debian package was not created at expected path: {output_deb}")
+
     if not args.keep_build_dir:
         shutil.rmtree(build_dir, ignore_errors=True)
 

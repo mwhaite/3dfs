@@ -184,6 +184,9 @@ def main(argv: list[str] | None = None) -> int:
     if result.returncode != 0:
         raise PackagingError("flatpak build-bundle failed.")
 
+    if not bundle_path.exists():
+        raise PackagingError(f"Flatpak bundle was not created at expected path: {bundle_path}")
+
     if not args.keep_build_dir:
         shutil.rmtree(build_dir, ignore_errors=True)
 

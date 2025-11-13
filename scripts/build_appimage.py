@@ -350,6 +350,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_path = _run_appimagetool(
         args.appdir, args.appimagetool, args.dist_dir, args.name, version
     )
+    if not output_path.exists():
+        raise PackagingError(f"AppImage was not created at expected path: {output_path}")
     print(f"AppImage written to {output_path}")
     return 0
 

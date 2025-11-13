@@ -236,6 +236,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     _run_pyinstaller(command)
 
     dist_root = (args.dist_dir / args.name) if not args.onefile else args.dist_dir
+    if not dist_root.exists():
+        raise PackagingError(f"PyInstaller did not produce the expected output: {dist_root}")
+
     if args.bundle_openscad is not None:
         bundled_path = _bundle_openscad(args.bundle_openscad, dist_root)
         print(f"Copied OpenSCAD executable to {bundled_path}")
@@ -243,6 +246,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.zip and not args.onefile:
         archive = _zip_distribution(args.dist_dir, args.name)
         print(f"Created distribution archive at {archive}")
+        if not archive.exists():
+            raise PackagingError(f"Distribution archive was not created at expected path: {archive}")
+    else:
+        print(f"Windows bundle created at {dist_root}")
 
     return 0
 
