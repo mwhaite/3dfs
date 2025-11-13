@@ -148,8 +148,29 @@ def _write_launcher(appdir: Path) -> Path:
     launcher_path.write_text(
         "#!/bin/sh\n"
         "set -e\n"
+        "\n"
+        "# Get the directory containing this script\n"
         'HERE="$(dirname "$(readlink -f "$0")")"\n'
-        'exec "$HERE/../lib/three-dfs/three-dfs" "$@"\n'
+        'PAYLOAD_DIR="$HERE/../lib/three-dfs"\n'
+        'EXECUTABLE="$PAYLOAD_DIR/three-dfs"\n'
+        "\n"
+        "# Enable debug output if APPIMAGE_DEBUG is set\n"
+        "if [ -n \"$APPIMAGE_DEBUG\" ]; then\n"
+        "  set -x\n"
+        '  echo "[launcher] HERE=$HERE" >&2\n'
+        '  echo "[launcher] EXECUTABLE=$EXECUTABLE" >&2\n'
+        "fi\n"
+        "\n"
+        "# Verify the executable exists\n"
+        'if [ ! -f "$EXECUTABLE" ]; then\n'
+        '  echo "[launcher] Error: executable not found: $EXECUTABLE" >&2\n'
+        '  echo "[launcher] Payload directory contents:" >&2\n'
+        '  ls -la "$PAYLOAD_DIR" >&2 2>/dev/null || echo "[launcher] (directory not accessible)" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        "\n"
+        "# Execute the frozen application\n"
+        'exec "$EXECUTABLE" "$@"\n'
     )
     launcher_path.chmod(0o755)
     return launcher_path

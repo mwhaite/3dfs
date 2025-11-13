@@ -1,5 +1,24 @@
 #!/bin/sh
 set -e
+
+# Capture APPDIR for the application
 APPDIR="$(dirname "$(readlink -f "$0")")"
 export APPDIR
-exec "$APPDIR/usr/bin/three-dfs" "$@"
+
+# Enable debug output if APPIMAGE_DEBUG is set
+if [ -n "$APPIMAGE_DEBUG" ]; then
+  set -x
+  echo "[AppRun] APPDIR=$APPDIR" >&2
+fi
+
+# Verify launcher exists before attempting to run
+LAUNCHER="$APPDIR/usr/bin/three-dfs"
+if [ ! -x "$LAUNCHER" ]; then
+  echo "[AppRun] Error: launcher not found or not executable: $LAUNCHER" >&2
+  echo "[AppRun] AppDir contents:" >&2
+  ls -la "$APPDIR" >&2 2>/dev/null || true
+  exit 1
+fi
+
+# Execute the launcher
+exec "$LAUNCHER" "$@"
