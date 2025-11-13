@@ -1,5 +1,7 @@
 # Manual testing checklist
 
+Use this checklist alongside the automated test suite when validating releases. The scenarios complement the [user guide](user-guide.md) and focus on end-to-end smoke tests across the desktop shell.
+
 ## Customizer dialog smoke test
 
 1. Launch the desktop shell (`hatch run three-dfs`).

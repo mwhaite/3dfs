@@ -78,4 +78,6 @@ operation's descriptor along with statistics for the transformed mesh:
 
 Backends can store the metadata directly within the customization session so
 the UI or downstream automation can reconstruct the applied steps and inspect
-the resulting geometry without re-running the backend.
+the resulting geometry without re-running the backend. Continue with the
+[customizer backend guide](customizer-backends.md) for information about
+defining parameter schemas and execution plans.
