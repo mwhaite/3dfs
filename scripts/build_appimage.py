@@ -72,6 +72,7 @@ def _build_command(
 
     collect_targets: Sequence[str] = (
         "shiboken6",
+        "PySide6",
         "trimesh",
         "build123d",
         "PIL",
@@ -83,7 +84,14 @@ def _build_command(
     for target in extra_collect_all:
         command.extend(("--collect-all", target))
 
-    hidden_imports: Sequence[str] = ("OpenGL",)
+    hidden_imports: Sequence[str] = (
+        "OpenGL",
+        "OpenGL.GL",
+        "PySide6.QtCore",
+        "PySide6.QtGui",
+        "PySide6.QtWidgets",
+        "PySide6.QtOpenGL",
+    )
     for module in hidden_imports:
         command.extend(("--hidden-import", module))
     for module in extra_hidden_imports:
@@ -91,6 +99,15 @@ def _build_command(
 
     if not ENTRY_SCRIPT.exists():
         raise PackagingError(f"Entry script not found: {ENTRY_SCRIPT}")
+    
+    # Add metadata collection for better AppImage compatibility
+    metadata_targets: Sequence[str] = (
+        "PySide6",
+        "shiboken6",
+    )
+    for target in metadata_targets:
+        command.extend(("--copy-metadata", target))
+    
     command.append(str(ENTRY_SCRIPT))
     return command
 
@@ -150,15 +167,21 @@ def _write_launcher(appdir: Path) -> Path:
         "set -e\n"
         "\n"
         "# Get the directory containing this script\n"
-        'HERE="$(dirname "$(readlink -f "$0")")"\n'
-        'PAYLOAD_DIR="$HERE/../lib/three-dfs"\n'
+        'HERE="$(dirname "$(readlink -f "$0")"\n'
+        'APPDIR="$HERE/../.."\n'
+        'PAYLOAD_DIR="$APPDIR/usr/lib/three-dfs"\n'
         'EXECUTABLE="$PAYLOAD_DIR/three-dfs"\n'
+        "\n"
+        "# Ensure library paths include bundled libraries\n"
+        'export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
         "\n"
         "# Enable debug output if APPIMAGE_DEBUG is set\n"
         "if [ -n \"$APPIMAGE_DEBUG\" ]; then\n"
         "  set -x\n"
         '  echo "[launcher] HERE=$HERE" >&2\n'
+        '  echo "[launcher] APPDIR=$APPDIR" >&2\n'
         '  echo "[launcher] EXECUTABLE=$EXECUTABLE" >&2\n'
+        '  echo "[launcher] LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >&2\n'
         "fi\n"
         "\n"
         "# Verify the executable exists\n"

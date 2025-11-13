@@ -5,10 +5,14 @@ set -e
 APPDIR="$(dirname "$(readlink -f "$0")")"
 export APPDIR
 
+# Set library path to include AppImage bundled libraries
+export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${APPDIR}/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 # Enable debug output if APPIMAGE_DEBUG is set
 if [ -n "$APPIMAGE_DEBUG" ]; then
   set -x
   echo "[AppRun] APPDIR=$APPDIR" >&2
+  echo "[AppRun] LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >&2
 fi
 
 # Verify launcher exists before attempting to run
