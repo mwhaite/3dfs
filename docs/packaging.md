@@ -4,6 +4,8 @@ The repository ships helper scripts under `scripts/` for building platform
 bundles. They do not aim to replace the official platform tooling, but they
 capture the steps we run locally so the process is reproducible.
 
+**Before building:** see [Packaging Environment Requirements](packaging_requirements.md) for system-level dependencies, tools, and installation instructions for each platform.
+
 ## Linux (AppImage)
 
 ```
