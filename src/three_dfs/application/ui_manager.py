@@ -589,6 +589,37 @@ class UIManager:
         logger.info("Customization generated, triggering library refresh")
         self._main_window._library_manager.rescan_library()
         self._main_window._library_manager.populate_repository()
+
+        # Attempt to select the generated container in the repository list so
+        # the library browser visibly reflects the new artifact. Prefer the
+        # recorded container asset path when available, falling back to the
+        # PipelineResult.container_path value.
+        container_path: str | None = None
+        try:
+            if getattr(result, "container", None) is not None:
+                container_asset = result.container
+                container_path = getattr(container_asset, "path", None)
+        except Exception:
+            container_path = None
+        if not container_path:
+            try:
+                raw = getattr(result, "container_path", None)
+                if raw is not None:
+                    container_path = str(raw)
+            except Exception:
+                container_path = None
+
+        if container_path:
+            for row in range(self._main_window._repository_list.count()):
+                item = self._main_window._repository_list.item(row)
+                try:
+                    raw_path = item.data(Qt.UserRole + 1) or item.text()
+                except Exception:
+                    raw_path = None
+                if raw_path and str(raw_path) == str(container_path):
+                    self._main_window._repository_list.setCurrentItem(item)
+                    break
+
         self._main_window._container_manager.refresh_current_container()
         self._main_window._preview_pane.set_item(
             updated.path,
