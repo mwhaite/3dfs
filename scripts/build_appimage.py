@@ -10,6 +10,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -162,39 +163,41 @@ def _write_launcher(appdir: Path) -> Path:
     launcher_dir = appdir / "usr" / "bin"
     launcher_dir.mkdir(parents=True, exist_ok=True)
     launcher_path = launcher_dir / "three-dfs"
-    launcher_path.write_text(
-        "#!/bin/sh\n"
-        "set -e\n"
-        "\n"
-        "# Get the directory containing this script\n"
-        'HERE="$(dirname "$(readlink -f "$0")"\n'
-        'APPDIR="$HERE/../.."\n'
-        'PAYLOAD_DIR="$APPDIR/usr/lib/three-dfs"\n'
-        'EXECUTABLE="$PAYLOAD_DIR/three-dfs"\n'
-        "\n"
-        "# Ensure library paths include bundled libraries\n"
-        'export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
-        "\n"
-        "# Enable debug output if APPIMAGE_DEBUG is set\n"
-        "if [ -n \"$APPIMAGE_DEBUG\" ]; then\n"
-        "  set -x\n"
-        '  echo "[launcher] HERE=$HERE" >&2\n'
-        '  echo "[launcher] APPDIR=$APPDIR" >&2\n'
-        '  echo "[launcher] EXECUTABLE=$EXECUTABLE" >&2\n'
-        '  echo "[launcher] LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >&2\n'
-        "fi\n"
-        "\n"
-        "# Verify the executable exists\n"
-        'if [ ! -f "$EXECUTABLE" ]; then\n'
-        '  echo "[launcher] Error: executable not found: $EXECUTABLE" >&2\n'
-        '  echo "[launcher] Payload directory contents:" >&2\n'
-        '  ls -la "$PAYLOAD_DIR" >&2 2>/dev/null || echo "[launcher] (directory not accessible)" >&2\n'
-        "  exit 1\n"
-        "fi\n"
-        "\n"
-        "# Execute the frozen application\n"
-        'exec "$EXECUTABLE" "$@"\n'
-    )
+    launcher_script = textwrap.dedent(
+        """#!/bin/sh
+        set -e
+
+        # Get the directory containing this script
+        HERE="$(dirname "$(readlink -f "$0")")"
+        APPDIR="$HERE/../.."
+        PAYLOAD_DIR="$APPDIR/usr/lib/three-dfs"
+        EXECUTABLE="$PAYLOAD_DIR/three-dfs"
+
+        # Ensure library paths include bundled libraries
+        export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+        # Enable debug output if APPIMAGE_DEBUG is set
+        if [ -n "$APPIMAGE_DEBUG" ]; then
+          set -x
+          echo "[launcher] HERE=$HERE" >&2
+          echo "[launcher] APPDIR=$APPDIR" >&2
+          echo "[launcher] EXECUTABLE=$EXECUTABLE" >&2
+          echo "[launcher] LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >&2
+        fi
+
+        # Verify the executable exists
+        if [ ! -f "$EXECUTABLE" ]; then
+          echo "[launcher] Error: executable not found: $EXECUTABLE" >&2
+          echo "[launcher] Payload directory contents:" >&2
+          ls -la "$PAYLOAD_DIR" >&2 2>/dev/null || echo "[launcher] (directory not accessible)" >&2
+          exit 1
+        fi
+
+        # Execute the frozen application
+        exec "$EXECUTABLE" "$@"
+        """
+    ).strip()
+    launcher_path.write_text(launcher_script + "\n")
     launcher_path.chmod(0o755)
     return launcher_path
 
