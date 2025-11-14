@@ -49,6 +49,13 @@ from ..customizer.status import (
     CustomizationStatus,
     evaluate_customization_status,
 )
+from ..gcode import (
+    GCodeAnalysis,
+    GCodePreviewCache,
+    GCodePreviewError,
+    analyze_gcode_program,
+    extract_render_hints,
+)
 from ..importer import GCODE_EXTENSIONS, SUPPORTED_EXTENSIONS
 from ..storage import AssetRecord, AssetService
 from ..thumbnails import (
@@ -180,6 +187,7 @@ class PreviewWorker(QRunnable):
         asset_service: AssetService | None = None,
         asset_record: AssetRecord | None = None,
         thumbnail_cache: ThumbnailCache | None = None,
+        gcode_preview_cache: GCodePreviewCache | None = None,
         size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
         text_preview_limit: int = DEFAULT_TEXT_PREVIEW_MAX_BYTES,
     ) -> None:
@@ -190,6 +198,7 @@ class PreviewWorker(QRunnable):
         self._asset_service = asset_service
         self._asset_record = asset_record
         self._thumbnail_cache = thumbnail_cache
+        self._gcode_cache = gcode_preview_cache
         self._size = size
         self._text_preview_limit = text_preview_limit
         self.signals = PreviewWorkerSignals()
@@ -202,6 +211,7 @@ class PreviewWorker(QRunnable):
                 asset_service=self._asset_service,
                 asset_record=self._asset_record,
                 thumbnail_cache=self._thumbnail_cache,
+                gcode_preview_cache=self._gcode_cache,
                 size=self._size,
                 text_preview_limit=self._text_preview_limit,
             )
@@ -231,6 +241,7 @@ class PreviewPane(QWidget):
         *,
         asset_service: AssetService | None = None,
         thumbnail_cache: ThumbnailCache | None = None,
+        gcode_preview_cache: GCodePreviewCache | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -238,6 +249,7 @@ class PreviewPane(QWidget):
         self._thread_pool = QThreadPool.globalInstance()
         self._asset_service = asset_service
         self._thumbnail_cache = thumbnail_cache
+        self._gcode_preview_cache = gcode_preview_cache
         self._text_preview_limit = DEFAULT_TEXT_PREVIEW_MAX_BYTES
 
         self._current_task_id: int | None = None
@@ -707,7 +719,8 @@ class PreviewPane(QWidget):
         is_plain_text_file = (
             entry_kind in {"file", "component", "attachment", "placeholder"} and suffix in _TEXT_PREVIEW_EXTENSIONS
         )
-        if is_plain_text_file:
+        hide_thumbnail = is_plain_text_file and suffix not in GCODE_EXTENSIONS
+        if hide_thumbnail:
             self._hide_tab(self._thumbnail_tab_index, reset_title="Thumbnail")
             self._thumbnail_label.clear()
         else:
@@ -843,6 +856,11 @@ class PreviewPane(QWidget):
             cache = ThumbnailCache()
             self._thumbnail_cache = cache
 
+        gcode_cache = self._gcode_preview_cache
+        if gcode_cache is None and self._asset_service is None:
+            gcode_cache = GCodePreviewCache()
+            self._gcode_preview_cache = gcode_cache
+
         # Convert string path to Path object safely
         if isinstance(absolute_path, str):
             try:
@@ -861,6 +879,7 @@ class PreviewPane(QWidget):
             asset_service=self._asset_service,
             asset_record=self._asset_record,
             thumbnail_cache=cache,
+            gcode_preview_cache=gcode_cache,
             size=DEFAULT_THUMBNAIL_SIZE,
             text_preview_limit=self._text_preview_limit,
         )
@@ -1329,7 +1348,10 @@ class PreviewPane(QWidget):
             self._asset_record = outcome.asset_record
             self._asset_metadata = dict(outcome.asset_record.metadata)
         elif outcome.thumbnail_info is not None:
-            self._asset_metadata["thumbnail"] = outcome.thumbnail_info
+            if self._current_is_gcode:
+                self._asset_metadata["gcode_preview"] = outcome.thumbnail_info
+            else:
+                self._asset_metadata["thumbnail"] = outcome.thumbnail_info
 
         if outcome.thumbnail_bytes:
             pixmap = QPixmap()
@@ -1961,6 +1983,7 @@ def _build_preview_outcome(
     asset_service: AssetService | None = None,
     asset_record: AssetRecord | None = None,
     thumbnail_cache: ThumbnailCache | None = None,
+    gcode_preview_cache: GCodePreviewCache | None = None,
     size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
     text_preview_limit: int = DEFAULT_TEXT_PREVIEW_MAX_BYTES,
 ) -> PreviewOutcome:
@@ -2047,6 +2070,34 @@ def _build_preview_outcome(
             thumbnail_bytes=thumbnail_bytes,
             thumbnail_message=message,
             thumbnail_info=thumbnail_info,
+            asset_record=updated_asset,
+            text_content=text_content,
+            text_role=text_role,
+            text_truncated=truncated,
+        )
+
+    if suffix in GCODE_EXTENSIONS:
+        (
+            gcode_metadata,
+            preview_bytes,
+            message,
+            preview_info,
+            updated_asset,
+        ) = _build_gcode_preview(
+            path,
+            asset_metadata=asset_metadata,
+            asset_service=asset_service,
+            asset_record=asset_record,
+            gcode_cache=gcode_preview_cache,
+            size=size,
+        )
+        metadata.extend(gcode_metadata)
+        return PreviewOutcome(
+            path=path,
+            metadata=metadata,
+            thumbnail_bytes=preview_bytes,
+            thumbnail_message=message,
+            thumbnail_info=preview_info,
             asset_record=updated_asset,
             text_content=text_content,
             text_role=text_role,
@@ -2474,6 +2525,202 @@ def _build_model_preview(
     )
 
 
+def _build_gcode_preview(
+    path: Path,
+    *,
+    asset_metadata: Mapping[str, Any] | None = None,
+    asset_service: AssetService | None = None,
+    asset_record: AssetRecord | None = None,
+    gcode_cache: GCodePreviewCache | None = None,
+    size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+) -> tuple[
+    list[tuple[str, str]],
+    bytes | None,
+    str | None,
+    dict[str, Any] | None,
+    AssetRecord | None,
+]:
+    metadata: list[tuple[str, str]] = [("Type", "G-code Program")]
+
+    hints = _collect_gcode_hints(asset_metadata, asset_service, asset_record, path)
+
+    try:
+        analysis = analyze_gcode_program(path)
+    except GCodePreviewError as exc:
+        message = f"G-code preview unavailable: {exc}".rstrip(".") + "."
+        metadata.append(("Toolpath Analysis", "Unavailable"))
+        return metadata, None, message, None, asset_record
+    except Exception:  # pragma: no cover - defensive safeguard
+        logger.exception("Unexpected error while analysing G-code file: %s", path)
+        return (
+            metadata,
+            None,
+            "G-code preview unavailable due to an unexpected error.",
+            None,
+            asset_record,
+        )
+
+    metadata.extend(_format_gcode_analysis_metadata(analysis, hints))
+
+    updated_asset = asset_record
+    preview_result = None
+
+    if asset_service is not None and asset_record is not None:
+        updated_asset, preview_result = asset_service.ensure_gcode_preview(
+            asset_record,
+            size=size,
+            hints=hints,
+            analysis=analysis,
+        )
+    else:
+        cache = gcode_cache or GCodePreviewCache()
+        if gcode_cache is None:
+            gcode_cache = cache
+        existing_info: Mapping[str, Any] | None = None
+        if isinstance(asset_metadata, Mapping):
+            candidate = asset_metadata.get("gcode_preview")
+            if isinstance(candidate, Mapping):
+                existing_info = candidate
+        try:
+            preview_result = cache.get_or_render(
+                path,
+                hints=hints,
+                existing_info=existing_info,
+                size=size,
+                analysis=analysis,
+            )
+        except GCodePreviewError as exc:
+            message = f"G-code preview unavailable: {exc}".rstrip(".") + "."
+            return metadata, None, message, None, updated_asset
+        except Exception:  # pragma: no cover - defensive safeguard
+            logger.exception("Unexpected error while rendering G-code preview for %s", path)
+            return (
+                metadata,
+                None,
+                "Unable to render G-code preview due to an unexpected error.",
+                None,
+                updated_asset,
+            )
+
+    if preview_result is None:
+        return (
+            metadata,
+            None,
+            "G-code preview not available for this file.",
+            None,
+            updated_asset,
+        )
+
+    message = (
+        "Generated new preview for G-code program."
+        if preview_result.updated
+        else "Loaded cached preview for G-code program."
+    )
+
+    return (
+        metadata,
+        preview_result.image_bytes,
+        message,
+        preview_result.info,
+        updated_asset,
+    )
+
+
+def _collect_gcode_hints(
+    asset_metadata: Mapping[str, Any] | None,
+    asset_service: AssetService | None,
+    asset_record: AssetRecord | None,
+    path: Path,
+) -> dict[str, str]:
+    hints: dict[str, str] = {}
+
+    if isinstance(asset_metadata, Mapping):
+        preview_meta = asset_metadata.get("gcode_preview")
+        if isinstance(preview_meta, Mapping):
+            stored_hints = preview_meta.get("hints")
+            if isinstance(stored_hints, Mapping):
+                for key, value in stored_hints.items():
+                    hints[str(key).lower()] = str(value)
+        metadata_hints = asset_metadata.get("gcode_hints")
+        if isinstance(metadata_hints, Mapping):
+            for key, value in metadata_hints.items():
+                hints[str(key).lower()] = str(value)
+
+    tag_source = asset_record.path if asset_record is not None else str(path)
+    if asset_service is not None:
+        try:
+            tags = asset_service.tags_for_path(tag_source)
+        except Exception:
+            tags = []
+        else:
+            hints.update(extract_render_hints(tags))
+
+    return hints
+
+
+def _format_gcode_analysis_metadata(
+    analysis: GCodeAnalysis,
+    hints: Mapping[str, str],
+) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+
+    entries.append(
+        (
+            "Toolpath Moves",
+            f"{analysis.total_moves} (Cut {analysis.cutting_moves}, Rapid {analysis.rapid_moves})",
+        )
+    )
+    entries.append(("Commands Parsed", str(analysis.command_count)))
+    entries.append(("Travel Distance", f"{analysis.travel_distance:.2f} {analysis.units}"))
+    entries.append(("Cut Distance", f"{analysis.cutting_distance:.2f} {analysis.units}"))
+
+    min_x, min_y, max_x, max_y = analysis.bounds_xy
+    entries.append(
+        (
+            "XY Bounds",
+            f"X {min_x:.2f} → {max_x:.2f} {analysis.units}, Y {min_y:.2f} → {max_y:.2f} {analysis.units}",
+        )
+    )
+    min_z, max_z = analysis.bounds_z
+    entries.append(("Z Range", f"{min_z:.2f} → {max_z:.2f} {analysis.units}"))
+
+    if getattr(analysis, "feed_rates", None):
+        feeds = ", ".join(f"{rate:g}" for rate in analysis.feed_rates)
+        if feeds:
+            entries.append(("Feed Rates", feeds))
+
+    descriptive_labels = {
+        "tool": "Tool Hint",
+        "material": "Material Hint",
+        "workpiece": "Workpiece Hint",
+    }
+
+    for key, label in descriptive_labels.items():
+        value = hints.get(key)
+        if value:
+            entries.append((label, str(value)))
+
+    ignored_hint_keys = {
+        "tool",
+        "material",
+        "workpiece",
+        "travel_color",
+        "cut_color",
+        "background",
+        "axis_color",
+        "line_width",
+        "workpiece_color",
+    }
+    additional = {
+        key: value for key, value in hints.items() if key not in ignored_hint_keys and str(value).strip()
+    }
+    if additional:
+        formatted = ", ".join(f"{key}={value}" for key, value in sorted(additional.items()))
+        entries.append(("Additional Hints", formatted))
+
+    return entries
+
+
 def _extract_model_stats(path: Path) -> list[tuple[str, str]]:
     suffix = path.suffix.lower()
 
@@ -2555,6 +2802,8 @@ def _classify_kind(path: Path, text_role: str | None = None) -> str:
         return "Image"
     if suffix in _MODEL_EXTENSIONS:
         return "3D Model"
+    if suffix in GCODE_EXTENSIONS:
+        return "G-code Program"
     if text_role == "openscad":
         return "OpenSCAD Source"
     if text_role == "build123d":
