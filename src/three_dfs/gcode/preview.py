@@ -5,10 +5,10 @@ import io
 import json
 import math
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable, Mapping
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -211,9 +211,9 @@ class GCodePreviewRenderer:
         lines.append(
             f"Moves: {analysis.total_moves} (cut {analysis.cutting_moves}, rapid {analysis.rapid_moves})"
         )
-        lines.append(
-            f"Travel: {analysis.travel_distance:.1f} {analysis.units}  |  Cut: {analysis.cutting_distance:.1f} {analysis.units}"
-        )
+        travel_info = f"Travel: {analysis.travel_distance:.1f} {analysis.units}"
+        cut_info = f"Cut: {analysis.cutting_distance:.1f} {analysis.units}"
+        lines.append(f"{travel_info}  |  {cut_info}")
         lines.append(f"Z range: {min_z:.2f} to {max_z:.2f} {analysis.units}")
 
         tool_hint = hint_map.get("tool")
