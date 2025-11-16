@@ -97,7 +97,7 @@ class ThumbnailRenderer:
     ) -> tuple[np.ndarray, np.ndarray] | None:
         suffix = source_path.suffix.lower()
 
-        if suffix in {".stl", ".obj"}:
+        if suffix in {".stl", ".obj", ".3mf"}:
             mesh = load_trimesh_mesh(source_path)
             if mesh is None:
                 return None
