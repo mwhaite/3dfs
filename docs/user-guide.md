@@ -31,11 +31,23 @@ When an asset advertises a supported backend, the **Customizer** tab surfaces a 
 
 ## Importing assets
 
-The importer registers local files or remote identifiers and stores them in managed storage. Supported formats include `.stl`, `.obj`, `.step`, and `.stp`. Metadata such as vertex counts, face counts, and bounding boxes are recorded via `trimesh`. Remote imports delegate to registered plugins; see [Extending 3dfs](extending.md#import-plugins) for implementation details.
+The importer registers local files or remote identifiers and stores them in managed storage. Supported formats include `.stl`, `.obj`, `.step`, `.stp`, and CNC programs such as `.gcode`, `.gco`, `.g`, `.nc`, and `.ngc`. Metadata such as vertex counts, face counts, bounding boxes, and toolpath summaries are recorded automatically. Remote imports delegate to registered plugins; see [Extending 3dfs](extending.md#import-plugins) for implementation details.
 
 ## Tagging
 
 Use the tag sidebar to create, rename, or remove tags scoped to the current container or file. Machine tags (`Machine:<ID>`) applied to G-code files display as clickable links in the preview pane. Clicking a tag applies a repository-wide filter matching the selected machine. Clear the search field to restore the full container list.
+
+## G-code previews
+
+Selecting a G-code asset enables both the **Thumbnail** and **Text** tabs. The thumbnail renders a 2D projection of the toolpath, highlighting rapid motions, cutting passes, the program origin, and recorded feed rates. Preview metadata summarises motion counts, travel distances, and axis bounds so you can assess a program without inspecting the raw commands.
+
+Annotate files with `GCodeHint:<key>=<value>` tags to steer the renderer. Hints support tool names, materials, workpiece dimensions, and colour overrides—for example:
+
+- `GCodeHint:tool=Ball Nose 6mm`
+- `GCodeHint:workpiece=120x80`
+- `GCodeHint:cut_color=#ff6600`
+
+Hints persist in the preview metadata alongside the cached image, and cached renders refresh automatically when the program contents or hint tags change. Use **Machine Tags…** in the preview pane to manage machine identifiers without disturbing rendering hints.
 
 ## Troubleshooting tips
 

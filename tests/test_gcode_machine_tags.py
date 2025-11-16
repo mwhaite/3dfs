@@ -56,7 +56,7 @@ def test_preview_populates_machine_tag_label(tmp_path: Path, qapp) -> None:
     assert label_text.startswith("Machine: <a ")
     assert ">TestRig<" in label_text
 
-    assert not pane._tabs.isTabEnabled(pane._thumbnail_tab_index)
+    assert pane._tabs.isTabEnabled(pane._thumbnail_tab_index)
     assert pane._tabs.isTabEnabled(pane._text_tab_index)
     assert "G1 X0 Y0" in pane._text_view.toPlainText()
 
@@ -97,7 +97,7 @@ def test_preview_formats_multiple_machine_tags(tmp_path: Path, qapp) -> None:
     assert label_text.count("<a href=") == 2
     assert ">RigA<" in label_text and ">RigB<" in label_text
 
-    assert not pane._tabs.isTabEnabled(pane._thumbnail_tab_index)
+    assert pane._tabs.isTabEnabled(pane._thumbnail_tab_index)
     assert pane._tabs.isTabEnabled(pane._text_tab_index)
 
 

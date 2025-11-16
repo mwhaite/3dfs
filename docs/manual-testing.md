@@ -51,3 +51,10 @@ Use this checklist alongside the automated test suite when validating releases. 
 4. Click the machine tag link in the preview and confirm the repository list filters down to containers carrying that tag (search box shows `#Machine:<ID>`).
 5. Clear the search field and verify the repository list repopulates.
 6. Re-open the dialog, remove the tag, and confirm the preview reverts to showing no machine tags.
+
+## G-code preview rendering
+
+1. Select a G-code asset and verify the **Thumbnail** tab displays a rendered toolpath preview alongside the **Text** tab contents.
+2. Add hint tags such as `GCodeHint:tool=EndMill`, `GCodeHint:workpiece=120x80`, or `GCodeHint:cut_color=#00ff88` and request a refresh; confirm the preview updates with the new annotations and colours.
+3. Remove the hint tags and ensure the preview reverts to the default colour scheme on the next refresh.
+4. Trigger **Capture View** on a different asset, return to the G-code file, and confirm the cached preview remains available without re-rendering delays.
