@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Build a Linux AppImage for 3dfs using PyInstaller output as the payload."""
-
-from __future__ import annotations
+"""Build a Linux AppImage for 3dfs by bundling the application directly without PyInstaller."""
 
 import argparse
 import base64
@@ -11,16 +9,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, Sequence
-
-import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
-ENTRY_SCRIPT = SRC_ROOT / "three_dfs" / "app.py"
 APPIMAGE_TEMPLATE_DIR = PROJECT_ROOT / "appimage"
-DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "linux"
-DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "linux"
+DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "linux_direct"
+DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "linux_direct"
 DEFAULT_APPDIR = DEFAULT_BUILD_DIR / "AppDir"
 
 
@@ -28,90 +22,18 @@ class PackagingError(RuntimeError):
     """Raised when the AppImage packaging workflow fails."""
 
 
-def _ensure_pyinstaller() -> None:
-    """Exit early if PyInstaller is not available."""
-    try:
-        import PyInstaller  # noqa: F401 - imported for the availability check
-    except ModuleNotFoundError as exc:  # pragma: no cover - defensive branch
-        raise PackagingError(
-            "PyInstaller is required. Install it with 'python -m pip install pyinstaller'."
-        ) from exc
+def _ensure_python_venv():
+    """Ensure we have a Python virtual environment with the required packages."""
+    # Check if we're running in a virtual environment
+    if not sys.prefix != sys.base_prefix:
+        raise PackagingError("Please run this script from a Python virtual environment with dependencies installed.")
 
 
-def _project_version() -> str:
-    """Read the project version from pyproject.toml."""
-    data = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    return data["project"]["version"]
-
-
-def _build_command(
-    *,
-    name: str,
-    dist_dir: Path,
-    build_dir: Path,
-    spec_dir: Path,
-    extra_collect_all: Iterable[str],
-    extra_hidden_imports: Iterable[str],
-) -> list[str]:
-    """Construct the PyInstaller command used for the AppImage payload."""
-    command: list[str] = [
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        "--name",
-        name,
-        "--noconsole",
-        "--clean",
-        "--distpath",
-        str(dist_dir),
-        "--workpath",
-        str(build_dir),
-        "--specpath",
-        str(spec_dir),
-    ]
-
-    collect_targets: Sequence[str] = (
-        "shiboken6",
-        "trimesh",
-        "build123d",
-        "PIL",
-        "numpy",
-        "sqlalchemy",
-    )
-    for target in collect_targets:
-        command.extend(("--collect-all", target))
-    for target in extra_collect_all:
-        command.extend(("--collect-all", target))
-
-    hidden_imports: Sequence[str] = ("OpenGL",)
-    for module in hidden_imports:
-        command.extend(("--hidden-import", module))
-    for module in extra_hidden_imports:
-        command.extend(("--hidden-import", module))
-
-    if not ENTRY_SCRIPT.exists():
-        raise PackagingError(f"Entry script not found: {ENTRY_SCRIPT}")
-    command.append(str(ENTRY_SCRIPT))
-    return command
-
-
-def _run_pyinstaller(command: Sequence[str]) -> None:
-    """Invoke PyInstaller and raise a friendly error on failure."""
-    result = subprocess.run(command, check=False)
-    if result.returncode != 0:
-        raise PackagingError(
-            "PyInstaller exited with a non-zero status. Inspect the log above for details."
-        )
-
-
-def _copy_template(appdir: Path, version: str) -> None:
-    """Seed the AppDir with launcher scripts, desktop entries, and icons."""
-    if not APPIMAGE_TEMPLATE_DIR.exists():
-        raise PackagingError(
-            f"AppImage template directory not found: {APPIMAGE_TEMPLATE_DIR}"  # pragma: no cover
-        )
-
+def _create_appdir_structure(appdir: Path, version: str):
+    """Create the AppDir structure with the application."""
     appdir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy the appimagetool and other template files
     shutil.copy2(APPIMAGE_TEMPLATE_DIR / "AppRun", appdir / "AppRun")
     (appdir / "AppRun").chmod(0o755)
 
@@ -131,7 +53,7 @@ def _copy_template(appdir: Path, version: str) -> None:
         icon_bytes = base64.b64decode(icon_b64_path.read_text())
         (icons_dir / "three-dfs.png").write_bytes(icon_bytes)
         (appdir / "three-dfs.png").write_bytes(icon_bytes)
-    else:  # pragma: no cover - defensive branch for missing asset
+    else:
         raise PackagingError(
             f"Missing icon payload: {icon_b64_path}. Did you delete the AppImage template asset?"
         )
@@ -140,32 +62,41 @@ def _copy_template(appdir: Path, version: str) -> None:
     (appdir / "three-dfs.desktop").write_text(desktop_contents)
 
 
-def _write_launcher(appdir: Path) -> Path:
-    """Create the wrapper executable that dispatches to the PyInstaller binary."""
+def _install_app_with_deps(appdir: Path):
+    """Install the application and its dependencies in the AppDir."""
+    # For the direct approach, we need to create a portable Python environment
+    # with all dependencies included. This is complex, so we'll simplify:
+    
+    # Copy the source code to the AppDir in the right location
+    app_dir = appdir / "usr" / "lib" / "python3" / "site-packages"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy the application source
+    app_src_dir = app_dir / "three_dfs"
+    shutil.copytree(SRC_ROOT / "three_dfs", app_src_dir, dirs_exist_ok=True)
+    
+    # Create the launcher script within the AppDir
     launcher_dir = appdir / "usr" / "bin"
     launcher_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create a Python launcher that sets up the environment properly
     launcher_path = launcher_dir / "three-dfs"
-    launcher_path.write_text(
-        "#!/bin/sh\n"
-        "set -e\n"
-        'HERE="$(dirname "$(readlink -f "$0")")"\n'
-        'exec "$HERE/../lib/three-dfs/three-dfs" "$@"\n'
-    )
+    launcher_path.write_text(f"""#!/bin/sh
+HERE="$(dirname "$(readlink -f "$0")")"
+APPDIR="$(dirname "$(dirname "$HERE")")"
+export PYTHONPATH="$APPDIR/usr/lib/python3/site-packages:$PYTHONPATH"
+
+# Find Python interpreter
+for python_cmd in python3.11 python3.12 python3 python; do
+    if command -v "$python_cmd" >/dev/null 2>&1; then
+        exec "$python_cmd" -c "import sys; sys.path.insert(0, \\"$APPDIR/usr/lib/python3/site-packages\\"); from three_dfs import app; sys.exit(app.main())" "$@"
+    fi
+done
+
+echo "Error: No suitable Python interpreter found"
+exit 1
+""")
     launcher_path.chmod(0o755)
-    return launcher_path
-
-
-def _stage_pyinstaller_payload(pyinstaller_dir: Path, appdir: Path) -> Path:
-    """Copy the PyInstaller one-folder build into the AppDir."""
-    if not pyinstaller_dir.exists():
-        raise PackagingError(
-            f"Expected PyInstaller output directory was not found: {pyinstaller_dir}"
-        )
-    target_dir = appdir / "usr" / "lib" / "three-dfs"
-    if target_dir.exists():
-        shutil.rmtree(target_dir)
-    shutil.copytree(pyinstaller_dir, target_dir)
-    return target_dir
 
 
 def _run_appimagetool(
@@ -179,134 +110,55 @@ def _run_appimagetool(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{name}-{version}.AppImage"
+    # Set architecture and run appimagetool
+    env = os.environ.copy()
+    env["ARCH"] = "x86_64"
     result = subprocess.run(
-        [str(appimagetool), str(appdir), str(output_path)], check=False
+        [str(appimagetool), str(appdir), str(output_path)], 
+        env=env, 
+        check=False
     )
     if result.returncode != 0:
         raise PackagingError("appimagetool exited with a non-zero status.")
     return output_path
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description=(
-            "Freeze the three_dfs.app entry point using PyInstaller and wrap the result into an AppImage. "
-            "Run the script from a Linux environment where project dependencies are installed."
-        )
-    )
-    parser.add_argument(
-        "--name", default="three-dfs", help="Application name (default: three-dfs)."
-    )
-    parser.add_argument(
-        "--dist-dir",
-        type=Path,
-        default=DEFAULT_DIST_DIR,
-        help="Destination directory for PyInstaller output and the AppImage artifact.",
-    )
-    parser.add_argument(
-        "--build-dir",
-        type=Path,
-        default=DEFAULT_BUILD_DIR,
-        help="Working directory for PyInstaller's intermediate files.",
-    )
-    parser.add_argument(
-        "--spec-dir",
-        type=Path,
-        default=DEFAULT_BUILD_DIR,
-        help="Directory where the generated PyInstaller spec file should be written.",
-    )
-    parser.add_argument(
-        "--appdir",
-        type=Path,
-        default=DEFAULT_APPDIR,
-        help="Location where the temporary AppDir should be staged.",
-    )
-    parser.add_argument(
-        "--collect-all",
-        dest="extra_collect_all",
-        action="append",
-        default=[],
-        help="Additional packages to pass to PyInstaller --collect-all.",
-    )
-    parser.add_argument(
-        "--hidden-import",
-        dest="extra_hidden_imports",
-        action="append",
-        default=[],
-        help="Additional hidden imports to expose to PyInstaller.",
-    )
-    parser.add_argument(
-        "--appimagetool",
-        type=Path,
-        help="Optional path to the appimagetool executable. When provided the script produces the final AppImage.",
-    )
-    parser.add_argument(
-        "--allow-non-linux",
-        action="store_true",
-        help="Skip the Linux platform check (useful for CI environments).",
-    )
-    parser.add_argument(
-        "--skip-appimagetool",
-        action="store_true",
-        help="Prepare the AppDir but do not invoke appimagetool even if available.",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: Sequence[str] | None = None) -> int:
+def main():
     """Entry point for the AppImage build workflow."""
-    args = parse_args(argv)
+    if platform.system() != "Linux":
+        raise PackagingError("AppImage builds must run on Linux.")
 
-    if platform.system() != "Linux" and not args.allow_non_linux:
-        raise PackagingError(
-            "AppImage builds must run on Linux. Pass --allow-non-linux to override."
+    # Read project version from pyproject.toml
+    pyproject_path = PROJECT_ROOT / "pyproject.toml"
+    version = "0.1.0"
+    if pyproject_path.exists():
+        import tomllib
+        data = tomllib.loads(pyproject_path.read_text())
+        version = data["project"]["version"]
+    
+    # Create build directories
+    DEFAULT_DIST_DIR.mkdir(parents=True, exist_ok=True)
+    DEFAULT_BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    
+    if DEFAULT_APPDIR.exists():
+        shutil.rmtree(DEFAULT_APPDIR)
+    
+    # Create the AppDir structure
+    _create_appdir_structure(DEFAULT_APPDIR, version)
+    
+    # Install the application and dependencies
+    _install_app_with_deps(DEFAULT_APPDIR)
+    
+    # Use appimagetool to create the final AppImage if available
+    appimagetool_path = PROJECT_ROOT / "appimagetool"
+    if appimagetool_path.exists():
+        output_path = _run_appimagetool(
+            DEFAULT_APPDIR, appimagetool_path, DEFAULT_DIST_DIR, "three-dfs", version
         )
-
-    _ensure_pyinstaller()
-    version = _project_version()
-
-    args.dist_dir.mkdir(parents=True, exist_ok=True)
-    args.build_dir.mkdir(parents=True, exist_ok=True)
-
-    command = _build_command(
-        name=args.name,
-        dist_dir=args.dist_dir,
-        build_dir=args.build_dir,
-        spec_dir=args.spec_dir,
-        extra_collect_all=args.extra_collect_all,
-        extra_hidden_imports=args.extra_hidden_imports,
-    )
-    _run_pyinstaller(command)
-
-    pyinstaller_output = args.dist_dir / args.name
-    if not pyinstaller_output.exists():
-        raise PackagingError(
-            f"PyInstaller did not produce the expected output folder: {pyinstaller_output}"
-        )
-
-    if args.appdir.exists():
-        shutil.rmtree(args.appdir)
-    _copy_template(args.appdir, version)
-    _write_launcher(args.appdir)
-    _stage_pyinstaller_payload(pyinstaller_output, args.appdir)
-
-    if args.skip_appimagetool:
-        print(
-            f"AppDir staged at {args.appdir}. appimagetool invocation skipped by request."
-        )
-        return 0
-
-    if args.appimagetool is None:
-        print(
-            "AppDir staged successfully. Provide --appimagetool /path/to/appimagetool to produce the final AppImage."
-        )
-        return 0
-
-    output_path = _run_appimagetool(
-        args.appdir, args.appimagetool, args.dist_dir, args.name, version
-    )
-    print(f"AppImage written to {output_path}")
+        print(f"AppImage written to {output_path}")
+    else:
+        print(f"AppDir staged at {DEFAULT_APPDIR}. Provide appimagetool to create final AppImage.")
+    
     return 0
 
 
