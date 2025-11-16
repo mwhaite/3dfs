@@ -46,6 +46,7 @@ SUPPORTED_EXTENSIONS: Final[frozenset[str]] = frozenset(
         ".step",
         ".stl",
         ".stp",
+        ".3mf",
     }
 )
 """Supported file extensions for imported assets."""
@@ -579,4 +580,5 @@ _FORMAT_EXTRACTORS: dict[str, _Extractor] = {
     ".obj": _extract_trimesh_metadata,
     ".step": extract_step_metadata,
     ".stp": extract_step_metadata,
+    ".3mf": _extract_trimesh_metadata,
 }

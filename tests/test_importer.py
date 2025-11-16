@@ -191,7 +191,7 @@ def test_importer_rejects_unsupported_extension(
 ) -> None:
     """Importer should raise a helpful error when encountering bad formats."""
 
-    unsupported = tmp_path / "model.3mf"
+    unsupported = tmp_path / "model.xyz"
     unsupported.write_text("dummy contents", encoding="utf-8")
 
     with pytest.raises(UnsupportedAssetTypeError):
