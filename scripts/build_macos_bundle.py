@@ -11,7 +11,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "macos_direct"
-DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "macos_direct"
+DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "macos"
 
 
 class PackagingError(RuntimeError):
@@ -32,6 +32,7 @@ def _create_app_bundle(dist_dir: Path, name: str, codesign_id: str = None):
     python_dir = contents_dir / "Resources" / "Python"
     
     # Create required directories
+    contents_dir.mkdir(parents=True)  # Create Contents directory first
     MacOS_dir.mkdir(parents=True)
     resources_dir.mkdir(parents=True)
     

@@ -11,7 +11,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "windows_direct"
-DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "windows_direct"
+DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "windows"
 
 
 class PackagingError(RuntimeError):
