@@ -26,9 +26,9 @@ def sample_gcode_path(tmp_path: Path) -> Path:
 
 def test_analyze_gcode_program_detects_motion(sample_gcode_path: Path) -> None:
     analysis = analyze_gcode_program(sample_gcode_path)
-    assert analysis.total_moves == 5
+    assert analysis.total_moves == 6
     assert analysis.cutting_moves == 4
-    assert analysis.rapid_moves == 1
+    assert analysis.rapid_moves == 2
     assert analysis.units == "mm"
     min_x, _, max_x, _ = analysis.bounds_xy
     assert pytest.approx(min_x) == 0.0

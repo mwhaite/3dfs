@@ -49,6 +49,22 @@ dependencies = [
   "SQLAlchemy>=2.0",
 ]
 
+[tool.hatch.envs.build-macos]
+dependencies = [
+  "py2app>=0.28",
+]
+
+[tool.hatch.envs.build-windows]
+dependencies = [
+  "cx_Freeze>=7.0",
+]
+
+[tool.hatch.envs.build-common]
+dependencies = [
+  "pyinstaller>=6.0",
+  "setuptools>=65.0",
+]
+
 [tool.hatch.envs.default.scripts]
 lint = [
   "ruff check src tests",

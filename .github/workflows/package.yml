@@ -78,7 +78,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip wheel
-          pip install . pyinstaller
+          pip install . py2app
 
       - name: Build macOS bundle
         run: python scripts/build_macos_bundle.py --create-dmg --dmg-name three-dfs.dmg
@@ -108,7 +108,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip wheel
-          pip install . pyinstaller
+          pip install . cx_freeze
 
       - name: Build Windows bundle
         shell: pwsh
