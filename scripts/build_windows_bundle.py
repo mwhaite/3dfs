@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
-"""Build a Windows standalone executable for 3dfs without PyInstaller, preserving package structure."""
+"""Build a Windows executable for 3dfs using cx_Freeze, preserving package structure."""
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+try:
+    from cx_Freeze import setup, Executable
+    from cx_Freeze.common import rebuild_code_object
+except ImportError:
+    print("cx_Freeze is required. Install it with 'pip install cx_freeze'", file=sys.stderr)
+    sys.exit(1)
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
-DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "windows_direct"
+DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "windows_exe"
 DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "windows"
 
 
@@ -18,61 +27,68 @@ class PackagingError(RuntimeError):
     """Raised when the packaging workflow cannot be completed."""
 
 
-def _create_windows_bundle(dist_dir: Path, name: str):
-    """Create a Windows executable bundle without PyInstaller."""
+def build_executable(dist_dir: Path, name: str):
+    """Build a Windows executable using cx_Freeze."""
     if platform.system() != "Windows":
-        print("Warning: Building Windows bundle on non-Windows platform.")
-    
-    # Create distribution directory
-    dist_dir = dist_dir / name
-    dist_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Copy the source code
-    app_dir = dist_dir / "three_dfs"
-    shutil.copytree(SRC_ROOT / "three_dfs", app_dir)
-    
-    # Create a main script that can be executed with Python
-    main_script = dist_dir / f"{name}.py"
-    main_script.write_text("""#!/usr/bin/env python3
-import sys
-import os
+        print("Warning: Building for Windows on a non-Windows system. This is OK for creating distribution files.")
 
-# Add the directory containing this script to Python path
-script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, script_dir)
+    # Define the main script to be converted to executable
+    main_script = SRC_ROOT / "three_dfs" / "app.py"
+    if not main_script.exists():
+        raise PackagingError(f"Main script not found: {main_script}")
 
-from three_dfs import app
+    # Define the executable
+    build_exe_options = {
+        "packages": [
+            "three_dfs",
+        ],
+        "includes": [
+            "three_dfs.app",
+            "three_dfs.config",
+            "three_dfs.paths",
+        ],
+        "excludes": [
+            "torch",      # ML framework not needed
+            "torchvision", # Not needed
+            "tensorflow", # ML framework not needed
+            "matplotlib", # Plotting library not needed
+            "scipy",      # Scientific computing not needed
+            "tkinter",    # Not needed since we use PySide6
+            "IPython",    # Interactive Python not needed
+            "jupyter",    # Notebook environment not needed
+            "tensorboard", # ML visualization not needed
+            "IPython",
+            "jupyter_client",
+            "jupyter_core",
+            "notebook",
+            "nbconvert",
+            "nbformat",
+        ],
+        "include_files": [],
+        "build_exe": str(dist_dir / name),
+        "optimize": 2,
+    }
 
-if __name__ == "__main__":
-    sys.exit(app.main())
-""")
-    
-    # Create a batch file to run the Python script
-    batch_file = dist_dir / f"{name}.bat"
-    batch_file.write_text(f"""@echo off
-python "{name}.py" %*
-""")
-    
-    # If Python launcher is available, create a .py launcher as well
-    launcher_script = dist_dir / f"{name}_launch.py"
-    launcher_script.write_text(f"""#!/usr/bin/env python3
-import sys
-import os
+    # Create the executable specification
+    executable = Executable(
+        script=str(main_script),
+        target_name=f"{name}.exe",
+        base="Win32GUI" if os.name == "nt" else None,  # Use GUI subsystem on Windows
+    )
 
-# Get the directory where this script is located
-script_dir = os.path.dirname(os.path.abspath(__file__))
-app_dir = os.path.join(script_dir, "three_dfs")
-
-# Add the app directory to the Python path
-sys.path.insert(0, script_dir)
-
-from three_dfs import app
-
-if __name__ == "__main__":
-    sys.exit(app.main())
-""")
-
-    return dist_dir
+    # Run cx_Freeze setup
+    try:
+        setup(
+            name=name,
+            version="0.1.0",
+            description="3dfs application",
+            options={"build_exe": build_exe_options},
+            executables=[executable]
+        )
+    except SystemExit as e:
+        # cx_Freeze calls sys.exit(0) when successful, so we catch that
+        if e.code != 0:
+            raise PackagingError(f"cx_Freeze build failed with exit code {e.code}")
 
 
 def _zip_distribution(dist_dir: Path, name: str) -> Path:
@@ -90,24 +106,19 @@ def _zip_distribution(dist_dir: Path, name: str) -> Path:
 def parse_args(argv=None):
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Create a Windows executable bundle for 3dfs without PyInstaller."
+        description="Create a Windows executable for 3dfs using cx_Freeze."
     )
     parser.add_argument("--name", default="three-dfs", help="Executable name (default: three-dfs).")
     parser.add_argument(
         "--dist-dir",
         type=Path,
         default=DEFAULT_DIST_DIR,
-        help="Destination directory (default: dist/windows_direct).",
+        help="Destination directory (default: dist/windows).",
     )
     parser.add_argument(
         "--zip",
         action="store_true",
         help="Create a ZIP archive of the distribution output.",
-    )
-    parser.add_argument(
-        "--allow-non-windows",
-        action="store_true",
-        help="Skip the Windows platform check (useful for CI environments).",
     )
     return parser.parse_args(argv)
 
@@ -115,17 +126,15 @@ def parse_args(argv=None):
 def main(argv=None) -> int:
     args = parse_args(argv)
 
-    if platform.system() != "Windows" and not args.allow_non_windows:
-        print("Warning: Building for Windows on a non-Windows system. This is OK for creating distribution files.")
+    dist_dir = args.dist_dir.resolve()
+    dist_dir.mkdir(parents=True, exist_ok=True)
 
-    dist_root = args.dist_dir.resolve()
-    dist_root.mkdir(parents=True, exist_ok=True)
-
-    bundle_path = _create_windows_bundle(dist_root, args.name)
-    print(f"Windows bundle created at {bundle_path}")
+    print(f"Building Windows executable for {args.name}...")
+    build_executable(dist_dir, args.name)
+    print(f"Windows executable created in {dist_dir / args.name}")
 
     if args.zip:
-        archive = _zip_distribution(bundle_path, args.name)
+        archive = _zip_distribution(dist_dir / args.name, args.name)
         print(f"Created distribution archive at {archive}")
 
     return 0
