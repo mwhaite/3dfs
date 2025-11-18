@@ -26,7 +26,7 @@ class PackagingError(RuntimeError):
     """Raised when the macOS packaging workflow cannot be completed."""
 
 
-def build_app(dist_dir: Path, name: str, create_dmg: bool = False):
+def build_app(dist_dir: Path, name: str, create_dmg: bool = False, dmg_name: str = "three-dfs.dmg"):
     """Build a macOS application bundle using py2app."""
     if platform.system() != "Darwin":
         raise PackagingError("py2app builds must run on macOS.")
@@ -121,7 +121,7 @@ setup(
         if create_dmg:
             app_path = dist_dir / f"{name}.app"
             if app_path.exists():
-                dmg_path = dist_dir / f"{name}.dmg"
+                dmg_path = dist_dir / dmg_name  # Use custom DMG name
                 create_dmg_from_app(app_path, dmg_path, name)
                 print(f"Created DMG at {dmg_path}")
             else:
@@ -176,6 +176,11 @@ def parse_args(argv=None):
         action="store_true",
         help="Create a DMG file in addition to the .app bundle.",
     )
+    parser.add_argument(
+        "--dmg-name",
+        default="three-dfs.dmg",
+        help="Filename for the DMG when --create-dmg is specified.",
+    )
     return parser.parse_args(argv)
 
 
@@ -191,7 +196,7 @@ def main(argv=None) -> int:
     dist_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Building macOS app for {args.name}...")
-    build_app(dist_dir, args.name, args.create_dmg)
+    build_app(dist_dir, args.name, args.create_dmg, args.dmg_name)
     print(f"macOS app bundle created in {dist_dir}")
 
     return 0
