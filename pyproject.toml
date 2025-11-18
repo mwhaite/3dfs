@@ -31,6 +31,11 @@ dependencies = [
   "lxml>=5.2",
 ]
 
+[project.optional-dependencies]
+build-windows = [
+  "cx-Freeze>=7.0",
+]
+
 [tool.hatch.build.targets.sdist]
 include = ["src", "tests", "docs", "README.md"]
 
