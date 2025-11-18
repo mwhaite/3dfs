@@ -208,9 +208,7 @@ class GCodePreviewRenderer:
 
         font = ImageFont.load_default()
         lines: list[str] = []
-        lines.append(
-            f"Moves: {analysis.total_moves} (cut {analysis.cutting_moves}, rapid {analysis.rapid_moves})"
-        )
+        lines.append(f"Moves: {analysis.total_moves} (cut {analysis.cutting_moves}, rapid {analysis.rapid_moves})")
         travel_info = f"Travel: {analysis.travel_distance:.1f} {analysis.units}"
         cut_info = f"Cut: {analysis.cutting_distance:.1f} {analysis.units}"
         lines.append(f"{travel_info}  |  {cut_info}")
