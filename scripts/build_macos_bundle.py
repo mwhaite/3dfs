@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""Build a macOS .app bundle for 3dfs without PyInstaller, preserving package structure."""
+"""Build a macOS .app bundle for 3dfs using py2app, preserving package structure."""
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+try:
+    from py2app import __file__ as py2app_file
+except ImportError:
+    print("py2app is required. Install it with 'pip install py2app'", file=sys.stderr)
+    sys.exit(1)
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
-DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "macos_direct"
+DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "macos_py2app"
 DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "macos"
 
 
@@ -18,93 +26,120 @@ class PackagingError(RuntimeError):
     """Raised when the macOS packaging workflow cannot be completed."""
 
 
-def _create_app_bundle(dist_dir: Path, name: str, codesign_id: str = None):
-    """Create a macOS app bundle without PyInstaller."""
-    if platform.system().lower() != "darwin" and codesign_id:
-        raise PackagingError("Code signing can only be performed on macOS.")
-    
-    # Create the .app bundle structure
-    app_name = f"{name}.app"
-    app_path = dist_dir / app_name
-    contents_dir = app_path / "Contents"
-    MacOS_dir = contents_dir / "MacOS"
-    resources_dir = contents_dir / "Resources"
-    python_dir = contents_dir / "Resources" / "Python"
-    
-    # Create required directories
-    contents_dir.mkdir(parents=True)  # Create Contents directory first
-    MacOS_dir.mkdir(parents=True)
-    resources_dir.mkdir(parents=True)
-    
-    # Copy source code
-    app_src_dir = python_dir / "three_dfs"
-    shutil.copytree(SRC_ROOT / "three_dfs", app_src_dir)
-    
-    # Create a main executable script in MacOS directory
-    main_executable = MacOS_dir / name
-    main_executable.write_text(f"""#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
-cd "$SCRIPT_DIR/../Resources/Python"
-python3 -m three_dfs.app "$@"
-""")
-    main_executable.chmod(0o755)
-    
-    # Create Info.plist
-    info_plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>{name}</string>
-    <key>CFBundleIdentifier</key>
-    <string>io.open3dfs.{name.replace('-', '')}</string>
-    <key>CFBundleName</key>
-    <string>{name}</string>
-    <key>CFBundleVersion</key>
-    <string>0.1.0</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>LSMinimumSystemVersion</key>
-    <string>10.15</string>
-</dict>
-</plist>"""
-    
-    info_plist_path = contents_dir / "Info.plist"
-    info_plist_path.write_text(info_plist_content)
-    
-    # If a codesign identity is provided, sign the app
-    if codesign_id:
-        codesign_cmd = [
-            "codesign",
-            "--deep",
-            "--force",
-            "--options",
-            "runtime",
-            "--sign",
-            codesign_id,
-            str(app_path),
+def build_app(dist_dir: Path, name: str, create_dmg: bool = False):
+    """Build a macOS application bundle using py2app."""
+    if platform.system() != "Darwin":
+        raise PackagingError("py2app builds must run on macOS.")
+
+    # Define the main script to be converted to executable
+    main_script = SRC_ROOT / "three_dfs" / "app.py"
+    if not main_script.exists():
+        raise PackagingError(f"Main script not found: {main_script}")
+
+    # Define the setup file content for py2app
+    setup_content = f'''from setuptools import setup
+
+APP = ['{str(main_script)}']
+DATA_FILES = []
+OPTIONS = {{
+    'argv_emulation': True,
+    'iconfile': 'app.icns',  # Optional: add an icon file
+    'plist': {{
+        'CFBundleName': '{name}',
+        'CFBundleDisplayName': '{name}',
+        'CFBundleExecutable': '{name}',
+        'CFBundleIdentifier': 'io.open3dfs.{name.replace("-", "")}',
+        'CFBundleVersion': '0.1.0',
+        'CFBundleShortVersionString': '0.1.0',
+        'NSHighResolutionCapable': True,
+        'LSMinimumSystemVersion': '10.15',
+    }},
+    'packages': [
+        'three_dfs',
+        'three_dfs.application',
+        'three_dfs.customizer',
+        'three_dfs.data',
+        'three_dfs.db',
+        'three_dfs.import_plugins',
+        'three_dfs.storage',
+        'three_dfs.thumbnails',
+        'three_dfs.ui',
+        'three_dfs.utils',
+        'PySide6',
+        'trimesh',
+        'PIL',
+        'numpy',
+        'sqlalchemy',
+        'build123d',
+    ],
+    'excludes': [
+        'torch',      # ML framework not needed
+        'torchvision', # Not needed
+        'tensorflow', # ML framework not needed
+        'matplotlib', # Plotting library not needed
+        'scipy',      # Scientific computing not needed
+        'tkinter',    # Not needed since we use PySide6
+        'IPython',    # Interactive Python not needed
+        'jupyter',    # Notebook environment not needed
+        'tensorboard', # ML visualization not needed
+    ],
+}}
+
+setup(
+    app=APP,
+    name='{name}',
+    data_files=DATA_FILES,
+    options={{'py2app': OPTIONS}},
+    setup_requires=['py2app'],
+)
+'''
+
+    # Write the setup file temporarily
+    setup_file = PROJECT_ROOT / "setup_py2app.py"
+    setup_file.write_text(setup_content)
+
+    try:
+        # Run py2app to build the app
+        cmd = [
+            sys.executable,
+            str(setup_file),
+            'py2app',
+            '--dist-dir',
+            str(dist_dir),
+            '--build-base',
+            str(DEFAULT_BUILD_DIR)
         ]
-        print("Running:", " ".join(codesign_cmd))
-        result = subprocess.run(codesign_cmd)
+        
+        print("Running:", " ".join(cmd))
+        result = subprocess.run(cmd, check=False, cwd=PROJECT_ROOT)
         if result.returncode != 0:
-            raise PackagingError("codesign failed.")
-    
-    return app_path
+            raise PackagingError(f"py2app build failed with exit code {result.returncode}")
+        
+        print(f"Built app bundle at {dist_dir}")
+        
+        # Optionally create a DMG
+        if create_dmg:
+            app_path = dist_dir / f"{name}.app"
+            if app_path.exists():
+                dmg_path = dist_dir / f"{name}.dmg"
+                create_dmg_from_app(app_path, dmg_path, name)
+                print(f"Created DMG at {dmg_path}")
+            else:
+                print(f"Warning: App bundle not found at {app_path} to create DMG")
+                
+    finally:
+        # Clean up the temporary setup file
+        if setup_file.exists():
+            setup_file.unlink()
 
 
-def _create_dmg(app_path: Path, output: Path, volume_name: str) -> None:
+def create_dmg_from_app(app_path: Path, dmg_path: Path, volume_name: str):
     """Create a DMG from the app bundle."""
     if shutil.which("hdiutil") is None:
         raise PackagingError("hdiutil is required to create a DMG.")
 
-    if output.exists():
-        output.unlink()
+    if dmg_path.exists():
+        dmg_path.unlink()
 
     cmd = [
         "hdiutil",
@@ -116,7 +151,7 @@ def _create_dmg(app_path: Path, output: Path, volume_name: str) -> None:
         "-ov",
         "-format",
         "UDZO",
-        str(output),
+        str(dmg_path),
     ]
 
     result = subprocess.run(cmd)
@@ -124,46 +159,40 @@ def _create_dmg(app_path: Path, output: Path, volume_name: str) -> None:
         raise PackagingError("hdiutil failed to create the DMG image.")
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build a macOS .app bundle for 3dfs without PyInstaller.")
-    parser.add_argument("--name", default="three-dfs", help="Name of the application bundle.")
+def parse_args(argv=None):
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Create a macOS .app bundle for 3dfs using py2app."
+    )
+    parser.add_argument("--name", default="three-dfs", help="App name (default: three-dfs).")
     parser.add_argument(
         "--dist-dir",
         type=Path,
         default=DEFAULT_DIST_DIR,
-        help="Destination directory (default: dist/macos_direct).",
+        help="Destination directory (default: dist/macos).",
     )
     parser.add_argument(
         "--create-dmg",
         action="store_true",
-        help="Generate a compressed DMG alongside the .app bundle.",
-    )
-    parser.add_argument(
-        "--dmg-name",
-        default="three-dfs.dmg",
-        help="Filename for the DMG when --create-dmg is specified.",
-    )
-    parser.add_argument(
-        "--codesign-id",
-        default=None,
-        help="Codesign identity to apply to the .app bundle (optional).",
+        help="Create a DMG file in addition to the .app bundle.",
     )
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv=None) -> int:
     args = parse_args(argv)
+
+    if platform.system() != "Darwin":
+        print("Warning: This script is intended to run on macOS for building macOS apps.")
+        # For the purposes of this workflow, we'll allow it to proceed but with a warning
+        # since it might be running in CI where we just want to check the script works
 
     dist_dir = args.dist_dir.resolve()
     dist_dir.mkdir(parents=True, exist_ok=True)
 
-    app_path = _create_app_bundle(dist_dir, args.name, args.codesign_id)
-    print(f"macOS app bundle created at {app_path}")
-
-    if args.create_dmg:
-        dmg_path = dist_dir / args.dmg_name
-        _create_dmg(app_path, dmg_path, volume_name=args.name)
-        print(f"DMG created at {dmg_path}")
+    print(f"Building macOS app for {args.name}...")
+    build_app(dist_dir, args.name, args.create_dmg)
+    print(f"macOS app bundle created in {dist_dir}")
 
     return 0
 
