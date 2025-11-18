@@ -11,7 +11,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
-DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "macos_py2app"
+DEFAULT_BDIST_DIR = PROJECT_ROOT / "build" / "macos_py2app"
 DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "macos"
 
 
@@ -160,8 +160,8 @@ setup(
             'py2app',
             '--dist-dir',
             str(dist_dir),
-            '--build-base',
-            str(DEFAULT_BUILD_DIR)
+            '--bdist-base',
+            str(DEFAULT_BDIST_DIR)
         ]
         
         print("Running:", " ".join(cmd))
