@@ -27,8 +27,6 @@ dependencies = [
   "numpy>=1.26",
   "SQLAlchemy>=2.0",
   "trimesh>=4.4",
-  "networkx>=3.2",
-  "lxml>=5.2",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -92,3 +90,41 @@ addopts = "-ra --strict-markers"
 testpaths = [
   "tests",
 ]
+
+[tool.cxfreeze]
+executables = [
+    {script = "src/three_dfs/app.py", target_name = "three-dfs"}
+]
+
+[tool.py2app]
+dist-dir = "dist/macos"
+packages = [
+    "three_dfs",
+    "PySide6",
+    "trimesh",
+    "PIL",
+    "numpy",
+    "sqlalchemy",
+    "build123d",
+]
+excludes = [
+    "torch",
+    "torchvision",
+    "tensorflow",
+    "matplotlib",
+    "scipy",
+    "tkinter",
+    "IPython",
+    "jupyter",
+    "tensorboard",
+]
+
+[tool.py2app.plist]
+CFBundleName = "three-dfs"
+CFBundleDisplayName = "three-dfs"
+CFBundleExecutable = "three-dfs"
+CFBundleIdentifier = "io.open3dfs.threedfs"
+CFBundleVersion = "0.1.0"
+CFBundleShortVersionString = "0.1.0"
+NSHighResolutionCapable = true
+LSMinimumSystemVersion = "10.15"
