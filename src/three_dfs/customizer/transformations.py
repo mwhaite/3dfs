@@ -7,30 +7,28 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from math import isclose
 from pathlib import Path
-from typing import Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
-try:  # pragma: no cover - optional dependency exercised in tests
+if TYPE_CHECKING:  # pragma: no cover - imported only for type checkers
     from build123d import (
-        Align,
-        BoundBox,
-        Compound,
-        Matrix,
-        Mesher,
-        Shape,
-        Solid,
-        Vector,
-        export_stl,
+        Align as _Align,
+        BoundBox as _BoundBox,
+        Compound as _Compound,
+        Matrix as _Matrix,
+        Mesher as _Mesher,
+        Shape as _Shape,
+        Solid as _Solid,
+        Vector as _Vector,
+        export_stl as _export_stl,
     )
-    from build123d.build_enums import Unit
-    from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
-    from OCP.gp import gp_Vec
-except ImportError:  # pragma: no cover - dependency availability varies
-    Align = BoundBox = Compound = Matrix = Mesher = Shape = Solid = Vector = export_stl = None  # type: ignore[assignment]
-    Unit = None  # type: ignore[assignment]
-    BRepPrimAPI_MakePrism = gp_Vec = None  # type: ignore[assignment]
-    _BUILD123D_AVAILABLE = False
-else:  # pragma: no cover - exercised via tests
-    _BUILD123D_AVAILABLE = True
+    from build123d.build_enums import Unit as _Unit
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism as _BRepPrimAPI_MakePrism
+    from OCP.gp import gp_Vec as _gp_Vec
+
+Align = BoundBox = Compound = Matrix = Mesher = Shape = Solid = Vector = export_stl = None  # type: ignore[assignment]
+Unit = None  # type: ignore[assignment]
+BRepPrimAPI_MakePrism = gp_Vec = None  # type: ignore[assignment]
+_BUILD123D_AVAILABLE = False
 
 __all__ = [
     "TransformationDescriptor",
@@ -59,9 +57,52 @@ class _TransformationContext:
     units: str
 
 
+def _load_build123d() -> None:
+    """Import build123d and related helpers on demand."""
+    global Align, BoundBox, Compound, Matrix, Mesher, Shape, Solid, Vector, export_stl
+    global Unit, BRepPrimAPI_MakePrism, gp_Vec, _BUILD123D_AVAILABLE
+
+    if _BUILD123D_AVAILABLE:
+        return
+
+    try:  # pragma: no cover - depends on external installation
+        from build123d import (
+            Align as build_align,
+            BoundBox as build_bound_box,
+            Compound as build_compound,
+            Matrix as build_matrix,
+            Mesher as build_mesher,
+            Shape as build_shape,
+            Solid as build_solid,
+            Vector as build_vector,
+            export_stl as build_export_stl,
+        )
+        from build123d.build_enums import Unit as build_unit
+        from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism as build_make_prism
+        from OCP.gp import gp_Vec as build_gp_vec
+    except ImportError as exc:  # pragma: no cover - surfaced to UI/tests
+        raise TransformationError(
+            "build123d is required to apply customizer transformations"
+        ) from exc
+
+    Align = build_align
+    BoundBox = build_bound_box
+    Compound = build_compound
+    Matrix = build_matrix
+    Mesher = build_mesher
+    Shape = build_shape
+    Solid = build_solid
+    Vector = build_vector
+    export_stl = build_export_stl
+    Unit = build_unit
+    BRepPrimAPI_MakePrism = build_make_prism
+    gp_Vec = build_gp_vec
+    _BUILD123D_AVAILABLE = True
+
+
 def _require_build123d() -> None:
     if not _BUILD123D_AVAILABLE:  # pragma: no cover - guarded by import checks
-        raise TransformationError("build123d is required to apply customizer transformations")
+        _load_build123d()
 
 
 def _vector(values: Iterable[float], *, components: int) -> tuple[float, ...]:

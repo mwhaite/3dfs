@@ -23,10 +23,14 @@ classifiers = [
 dependencies = [
   "PySide6>=6.7",
   "Pillow>=10.3",
-  "build123d>=0.9",
   "numpy>=1.26",
   "SQLAlchemy>=2.0",
   "trimesh>=4.4",
+]
+
+[project.optional-dependencies]
+build123d = [
+  "build123d>=0.9",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -60,12 +64,6 @@ dependencies = [
 [tool.hatch.envs.build-windows]
 dependencies = [
   "cx_Freeze>=7.0",
-]
-
-[tool.hatch.envs.build-common]
-dependencies = [
-  "pyinstaller>=6.0",
-  "setuptools>=65.0",
 ]
 
 [tool.hatch.envs.default.scripts]
@@ -110,7 +108,6 @@ packages = [
     "PIL",
     "numpy",
     "sqlalchemy",
-    "build123d",
 ]
 excludes = [
     "torch",
