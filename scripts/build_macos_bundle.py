@@ -156,11 +156,17 @@ def build_bundle(
 
     produced = dist_dir / f"{entry_script.stem}.app"
     final_bundle = dist_dir / f"{bundle_name}.app"
-    if produced != final_bundle:
-        if final_bundle.exists():
-            shutil.rmtree(final_bundle)
-        if produced.exists():
-            produced.rename(final_bundle)
+    if produced == final_bundle:
+        return final_bundle
+
+    if not produced.exists() and final_bundle.exists():
+        # py2app already emitted the bundle with the desired name.
+        return final_bundle
+
+    if final_bundle.exists():
+        shutil.rmtree(final_bundle)
+    if produced.exists():
+        produced.rename(final_bundle)
     return final_bundle
 
 
