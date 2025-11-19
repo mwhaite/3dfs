@@ -46,10 +46,10 @@ Results are written to `dist/windows/`.
 ## macOS bundle
 
 ```bash
-python scripts/build_macos_bundle.py --create-dmg
+python scripts/build_macos_bundle.py
 ```
 
-Run on macOS. The helper constructs a `.app` bundle under `dist/macos/` and optionally wraps it in a DMG when `--create-dmg` is supplied. Use `--help` for codesign, icon, and notarisation options.
+Run on macOS with the PyObjC toolchain installed (use `pip install -r packaging/macos/requirements.txt` to grab `py2app` and the Cocoa/Quartz bridges). The helper reads `pyproject.toml`, cleans previous artifacts, runs `py2app`, and emits both `dist/macos/three-dfs.app` and `dist/macos/three-dfs-<version>.dmg`. There are no flags or optional modes—the script always performs the full packaging step the CI workflow runs.
 
 ## Continuous integration
 

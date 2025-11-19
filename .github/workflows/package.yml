@@ -78,14 +78,11 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip wheel
-          pip install . py2app
+          pip install .
+          pip install -r packaging/macos/requirements.txt
 
       - name: Build macOS bundle
-        run: python -m py2app
-
-      - name: Create DMG
-        run: |
-          hdiutil create -volname three-dfs -srcfolder dist/macos/three-dfs.app -ov -format UDZO dist/macos/three-dfs.dmg
+        run: python scripts/build_macos_bundle.py
 
       - name: Archive macOS artifacts
         uses: actions/upload-artifact@v4
@@ -118,7 +115,8 @@ jobs:
         shell: pwsh
         run: |
           python -m cx_Freeze build
-          Compress-Archive -Path build/exe.win-amd64-3.11/* -DestinationPath dist/windows/three-dfs-windows.zip
+          New-Item -ItemType Directory -Force -Path dist/windows | Out-Null
+          Compress-Archive -Path build/exe.win-amd64-3.11/* -DestinationPath dist/windows/three-dfs-windows.zip -Force
 
       - name: Archive Windows artifacts
         uses: actions/upload-artifact@v4
