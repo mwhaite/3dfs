@@ -166,8 +166,11 @@ def build_bundle(
 
 def create_dmg(app_bundle: Path, *, dmg_name: str, volume_name: str) -> Path:
     dmg_path = app_bundle.parent / dmg_name
+    if not app_bundle.exists():
+        raise SystemExit(f"Cannot create DMG – app bundle missing: {app_bundle}")
     if shutil.which("hdiutil") is None:
         raise SystemExit("hdiutil not found. Install Xcode command-line tools.")
+    dmg_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         "hdiutil",
         "create",
