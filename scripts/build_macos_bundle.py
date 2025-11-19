@@ -18,7 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for Python <=3.10
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
-ENTRY_SCRIPT = ROOT / "src/three_dfs/app.py"
+ENTRY_SCRIPT = ROOT / "scripts/three_dfs_entry.py"
 PYPROJECT = ROOT / "pyproject.toml"
 DEFAULT_BUILD_DIR = ROOT / "build" / "macos"
 

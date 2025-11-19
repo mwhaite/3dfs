@@ -98,7 +98,7 @@ testpaths = [
 
 [tool.cxfreeze]
 executables = [
-    {script = "src/three_dfs/app.py", target_name = "three-dfs"}
+    {script = "scripts/three_dfs_entry.py", target_name = "three-dfs"}
 ]
 
 [tool.py2app]
