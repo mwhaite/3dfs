@@ -138,14 +138,21 @@ def build_bundle(
     log("Running py2app")
     from setuptools import setup  # pylint: disable=import-outside-toplevel
 
-    setup(
-        name=project_name,
-        version=project_version,
-        app=[str(entry_script)],
-        options={"py2app": py2app_options},
-        setup_requires=["py2app"],
-        script_args=script_args,
-    )
+    try:
+        setup(
+            name=project_name,
+            version=project_version,
+            app=[str(entry_script)],
+            options={"py2app": py2app_options},
+            setup_requires=["py2app"],
+            script_args=script_args,
+        )
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on runner state
+        missing = getattr(exc, "name", str(exc))
+        raise SystemExit(
+            f"py2app failed while importing '{missing}'. "
+            "Ensure this dependency installs cleanly before packaging."
+        ) from exc
 
     produced = dist_dir / f"{entry_script.stem}.app"
     final_bundle = dist_dir / f"{bundle_name}.app"
