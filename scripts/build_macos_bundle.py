@@ -16,6 +16,8 @@ try:  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover - fallback for Python <=3.10
     import tomli as tomllib  # type: ignore[assignment]
 
+sys.setrecursionlimit(10000)
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
 ENTRY_SCRIPT = ROOT / "scripts/three_dfs_entry.py"
