@@ -1208,17 +1208,6 @@ class PreviewPane(QWidget):
         if isinstance(parameters, Mapping):
             parameter_html = self._format_parameter_summary(parameters)
 
-        if base_path:
-            descriptor_text = descriptor or base_path
-            self._add_customization_action_button(f"View base: {descriptor_text}", base_path)
-            for derivative in self._list_derivatives_for_path(base_path):
-                if self._asset_record is not None and derivative.path == self._asset_record.path:
-                    continue
-                label = derivative.label or Path(derivative.path).name
-                self._add_customization_action_button(f"Open {label}", derivative.path)
-                if len(self._customization_action_buttons) >= 3:
-                    break
-
         return parts, parameter_html
 
     def _format_parameter_summary(self, parameters: Mapping[str, Any] | None) -> str:
