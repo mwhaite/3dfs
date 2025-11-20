@@ -121,7 +121,10 @@ class AssetManager:
 
         display_name = self.derive_display_name(asset)
 
-        prompt = f"Delete the container '{display_name}' and all of its files?"
+        prompt = (
+            f"Delete the container '{display_name}' and all of its files? "
+            "This cannot be undone because temporary undo versions are removed with the project."
+        )
 
         reply = QMessageBox.question(
             self._main_window,

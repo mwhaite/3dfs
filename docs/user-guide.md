@@ -27,7 +27,7 @@ Use context menus to refresh metadata, import attachments, or open linked contai
 
 ### Undo support
 
-Accidental deletions can be reversed from **File → Undo** (shortcut `Ctrl+Z`). 3dfs moves removed files into a managed `.3dfs-trash` folder under your library root and records a hidden container version snapshot so the command can restore both the file and its entry without polluting the Versions UI. The same recovery is available from the command line: `three-dfs undo` will resurrect the most recent tracked change, while `three-dfs redo` reapplies it when you need to step forward again.
+Accidental deletions can be reversed from **File → Undo** (shortcut `Ctrl+Z`). 3dfs captures hidden container version snapshots so the command can restore removed files and their metadata without exposing the temporary versions in the Versions UI or creating an on-disk trash folder. The same recovery is available from the command line: `three-dfs undo` will resurrect the most recent tracked change, while `three-dfs redo` reapplies it when you need to step forward again. Deleting an entire container is permanent because its temporary undo versions are removed with the project, so confirm carefully before accepting the deletion prompt.
 
 ## Customization workflow
 

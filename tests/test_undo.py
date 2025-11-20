@@ -26,11 +26,12 @@ def test_undo_restores_deleted_file_and_metadata(tmp_path):
         label="Container",
         metadata={"files": [{"path": str(target_file)}]},
     )
-    trash_path = history.trash_file(target_file)
+    file_bytes = target_file.read_bytes()
+    target_file.unlink()
     history.record_deletion(
         kind="file",
         original_path=target_file,
-        trash_path=trash_path,
+        trash_path=None,
         container_asset_id=container_asset.id,
         container_asset_path=container_asset.path,
         container_metadata=container_asset.metadata,
@@ -40,6 +41,7 @@ def test_undo_restores_deleted_file_and_metadata(tmp_path):
             "metadata": {},
             "tags": [],
         },
+        file_bytes=file_bytes,
         asset_service=service,
     )
 
@@ -74,15 +76,17 @@ def test_redo_reapplies_deletion(tmp_path):
         label="Container",
         metadata={"files": [{"path": str(target_file)}]},
     )
-    trash_path = history.trash_file(target_file)
+    file_bytes = target_file.read_bytes()
+    target_file.unlink()
     history.record_deletion(
         kind="file",
         original_path=target_file,
-        trash_path=trash_path,
+        trash_path=None,
         container_asset_id=container_asset.id,
         container_asset_path=container_asset.path,
         container_metadata=container_asset.metadata,
         asset_snapshot={"path": str(target_file), "label": "note", "metadata": {}, "tags": []},
+        file_bytes=file_bytes,
         asset_service=service,
     )
 
@@ -124,15 +128,17 @@ def test_record_deletion_uses_version_system(tmp_path):
         label="Container",
         metadata={"files": [{"path": str(target_file)}], "notes": "snapshot"},
     )
-    trash_path = history.trash_file(target_file)
+    file_bytes = target_file.read_bytes()
+    target_file.unlink()
     history.record_deletion(
         kind="file",
         original_path=target_file,
-        trash_path=trash_path,
+        trash_path=None,
         container_asset_id=container_asset.id,
         container_asset_path=container_asset.path,
         container_metadata=container_asset.metadata,
         asset_snapshot={"path": str(target_file), "label": "log", "metadata": {}, "tags": []},
+        file_bytes=file_bytes,
         asset_service=service,
     )
 

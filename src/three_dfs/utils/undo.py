@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 from dataclasses import asdict, dataclass, field
@@ -55,6 +56,12 @@ class ActionHistory:
 
         return self._trash_root
 
+    @property
+    def uses_versions(self) -> bool:
+        """True when deletion history is backed by container versions."""
+
+        return self._use_versions
+
     def record_action(self, action: UndoAction) -> None:
         """Push *action* onto the undo stack and persist to disk."""
 
@@ -78,6 +85,7 @@ class ActionHistory:
         container_asset_path: str | None,
         container_metadata: dict[str, Any] | None,
         asset_snapshot: dict[str, Any] | None,
+        file_bytes: bytes | None = None,
         asset_service=None,
     ) -> None:
         """Capture a reversible deletion event on disk and in metadata."""
@@ -99,6 +107,9 @@ class ActionHistory:
             "container_metadata": container_metadata,
             "asset_snapshot": asset_snapshot,
             "container_version_id": container_version_id,
+            "file_contents": base64.b64encode(file_bytes).decode("ascii")
+            if file_bytes is not None
+            else None,
         }
         description = f"Removed {original_path.name}"
         self.record_action(UndoAction(kind="delete_entry", payload=payload, description=description))
@@ -224,6 +235,7 @@ class ActionHistory:
         container_asset_path = payload.get("container_asset_path")
         asset_snapshot = payload.get("asset_snapshot")
         container_version_id = payload.get("container_version_id")
+        file_contents_encoded = payload.get("file_contents")
 
         if container_version_id is not None:
             version = asset_service.get_container_version(int(container_version_id))
@@ -233,6 +245,14 @@ class ActionHistory:
         if trash_path and trash_path.exists():
             original_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(trash_path), original_path)
+        elif isinstance(file_contents_encoded, str) and original_path:
+            try:
+                contents = base64.b64decode(file_contents_encoded.encode("ascii"))
+            except Exception:
+                contents = None
+            if contents is not None:
+                original_path.parent.mkdir(parents=True, exist_ok=True)
+                original_path.write_bytes(contents)
 
         if asset_snapshot is not None:
             snapshot_path = asset_snapshot.get("path")
@@ -278,6 +298,7 @@ class ActionHistory:
         container_asset_path = payload.get("container_asset_path")
         asset_snapshot = payload.get("asset_snapshot")
         container_version_id = payload.get("container_version_id")
+        file_contents_encoded = payload.get("file_contents")
 
         if container_version_id is not None:
             version = asset_service.get_container_version(int(container_version_id))
@@ -285,16 +306,26 @@ class ActionHistory:
                 metadata_before = version.metadata
 
         if original_path.exists():
-            if trash_path is None:
-                trash_path = self.trash_root / original_path.name
-            trash_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(original_path), str(trash_path))
+            try:
+                original_path.unlink()
+            except OSError:
+                pass
+        elif trash_path is not None and trash_path.exists():
+            trash_path.unlink(missing_ok=True)
 
         if isinstance(asset_snapshot, dict):
             snapshot_path = asset_snapshot.get("path")
             existing = asset_service.get_asset_by_path(snapshot_path) if snapshot_path else None
             if existing is not None:
                 asset_service.delete_asset(existing.id)
+
+        if isinstance(file_contents_encoded, str):
+            try:
+                file_contents = base64.b64decode(file_contents_encoded.encode("ascii"))
+            except Exception:
+                file_contents = None
+            if file_contents is not None:
+                payload["file_contents"] = base64.b64encode(file_contents).decode("ascii")
 
         container = None
         if metadata_before is not None:

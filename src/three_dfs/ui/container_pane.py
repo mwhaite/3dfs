@@ -875,19 +875,23 @@ class ContainerPane(QWidget):
         file_existed = True
         should_remove_from_disk = kind not in {"link", "linked_component"}
         trash_path: Path | None = None
-        file_moved_to_trash = False
-        if should_remove_from_disk and self._undo_history is not None and path.exists():
-            try:
-                trash_path = self._undo_history.trash_file(path)
-                file_moved_to_trash = True
-            except Exception:
-                trash_path = None
-        if should_remove_from_disk and not file_moved_to_trash:
-            try:
-                path.unlink()
-            except OSError:
-                # File might not exist or permission issue, but continue to remove asset record
-                file_existed = False
+        file_bytes: bytes | None = None
+        if should_remove_from_disk and path.exists():
+            if self._undo_history is not None and self._undo_history.uses_versions:
+                try:
+                    file_bytes = path.read_bytes()
+                except Exception:
+                    file_bytes = None
+            if self._undo_history is not None and not self._undo_history.uses_versions:
+                try:
+                    trash_path = self._undo_history.trash_file(path)
+                except Exception:
+                    trash_path = None
+            if trash_path is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    file_existed = False
 
         # Attempt to remove supplementary preview artifacts (e.g., captured thumbnails).
         if should_remove_from_disk:
@@ -1016,6 +1020,7 @@ class ContainerPane(QWidget):
                 container_asset_path=self._container_path,
                 container_metadata=container_metadata_before,
                 asset_snapshot=asset_snapshot,
+                file_bytes=file_bytes,
                 asset_service=self._asset_service,
             )
 
