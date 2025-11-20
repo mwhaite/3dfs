@@ -56,6 +56,9 @@ _METADATA_ROLE = Qt.UserRole + 2
 _ASSET_ID_ROLE = Qt.UserRole + 3
 _PRIMARY_ROLE = Qt.UserRole + 4
 
+# Accent color for automatic links (customized containers, symlinks, etc.)
+_AUTOMATIC_LINK_COLOR = QColor(236, 72, 153)
+
 
 @dataclass(slots=True)
 class ContainerComponent:
@@ -528,6 +531,10 @@ class ContainerPane(QWidget):
             if source_label:
                 metadata["source_label"] = source_label
 
+            link_type = entry.get("link_type")
+            if isinstance(link_type, str) and link_type.strip():
+                metadata["link_type"] = link_type.strip()
+
             key = (link_id, source_container_id, metadata.get("link_target"))
             if key in seen:
                 continue
@@ -701,7 +708,42 @@ class ContainerPane(QWidget):
                 if source_path:
                     tooltip_bits.append(source_path)
             item.setToolTip("\n".join(bit for bit in tooltip_bits if bit))
+        else:
+            self._apply_link_status_style(item, component.kind or "", metadata)
         list_widget.addItem(item)
+
+    def _apply_link_status_style(
+        self,
+        item: QListWidgetItem,
+        kind: str,
+        metadata: Mapping[str, Any] | None,
+    ) -> None:
+        normalized_kind = kind.strip().casefold()
+        if normalized_kind not in {"link", "linked_here"}:
+            return
+        if metadata is None:
+            return
+        link_type = self._extract_link_type(metadata)
+        if link_type is None or link_type.casefold() == "link":
+            return
+
+        item.setForeground(_AUTOMATIC_LINK_COLOR)
+
+        tooltip = item.toolTip() or ""
+        tooltip_lines = [line for line in tooltip.split("\n") if line.strip()]
+        tooltip_lines.append(f"Automatic link ({link_type})")
+        target = metadata.get("link_target")
+        if isinstance(target, str) and target.strip():
+            tooltip_lines.append(target.strip())
+        item.setToolTip("\n".join(dict.fromkeys(tooltip_lines)))
+
+    @staticmethod
+    def _extract_link_type(metadata: Mapping[str, Any]) -> str | None:
+        candidate = metadata.get("link_type")
+        if isinstance(candidate, str):
+            text = candidate.strip()
+            return text or None
+        return None
 
     def _update_action_states(self) -> None:
         has_container = self._container_path is not None
