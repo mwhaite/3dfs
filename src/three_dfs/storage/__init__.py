@@ -9,7 +9,12 @@ from .repository import (
     ContainerVersionRecord,
     CustomizationRecord,
 )
-from .service import AssetSeed, AssetService
+from .service import (
+    UNDO_VERSION_NAME_PREFIX,
+    UNDO_VERSION_NOTE,
+    AssetSeed,
+    AssetService,
+)
 
 __all__ = [
     "AssetRecord",
@@ -18,6 +23,8 @@ __all__ = [
     "ContainerVersionRecord",
     "AssetSeed",
     "AssetService",
+    "UNDO_VERSION_NAME_PREFIX",
+    "UNDO_VERSION_NOTE",
     "build_asset_metadata",
     "CustomizationRecord",
     "DEFAULT_DB_PATH",

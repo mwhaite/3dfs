@@ -1016,6 +1016,7 @@ class ContainerPane(QWidget):
                 container_asset_path=self._container_path,
                 container_metadata=container_metadata_before,
                 asset_snapshot=asset_snapshot,
+                asset_service=self._asset_service,
             )
 
         row = self._components.row(item)

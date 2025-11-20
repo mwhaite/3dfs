@@ -34,10 +34,12 @@ class ActionHistory:
         *,
         trash_root: Path | None = None,
         max_entries: int = 50,
+        use_versions: bool = True,
     ) -> None:
         self._history_path = history_path or (get_config().library_root / _DEFAULT_HISTORY_FILENAME)
         self._trash_root = trash_root or (get_config().library_root / _DEFAULT_TRASH_FOLDER)
         self._max_entries = max_entries
+        self._use_versions = use_versions
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
         self._trash_root.mkdir(parents=True, exist_ok=True)
         self._undo_stack: list[UndoAction]
@@ -76,8 +78,17 @@ class ActionHistory:
         container_asset_path: str | None,
         container_metadata: dict[str, Any] | None,
         asset_snapshot: dict[str, Any] | None,
+        asset_service=None,
     ) -> None:
         """Capture a reversible deletion event on disk and in metadata."""
+
+        container_version_id: int | None = None
+        if self._use_versions and asset_service is not None and container_asset_id is not None:
+            container_version_id = self._create_hidden_version(
+                asset_service,
+                container_asset_id,
+                container_metadata,
+            )
 
         payload: dict[str, Any] = {
             "kind": kind,
@@ -87,6 +98,7 @@ class ActionHistory:
             "container_asset_path": container_asset_path,
             "container_metadata": container_metadata,
             "asset_snapshot": asset_snapshot,
+            "container_version_id": container_version_id,
         }
         description = f"Removed {original_path.name}"
         self.record_action(UndoAction(kind="delete_entry", payload=payload, description=description))
@@ -139,6 +151,65 @@ class ActionHistory:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _create_hidden_version(
+        self,
+        asset_service,
+        container_asset_id: int,
+        container_metadata: dict[str, Any] | None,
+    ) -> int | None:
+        """Persist a hidden container version to back the undo payload."""
+
+        if container_metadata is None:
+            return None
+
+        from ..storage import AssetService  # Local import to avoid cycles in type checkers
+        from ..storage.service import UNDO_VERSION_NAME_PREFIX, UNDO_VERSION_NOTE
+
+        if not isinstance(asset_service, AssetService):  # pragma: no cover - defensive
+            return None
+
+        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%f")
+        name = f"{UNDO_VERSION_NAME_PREFIX}{timestamp}"
+        try:
+            record = asset_service.create_container_version(
+                int(container_asset_id),
+                name=name,
+                metadata=container_metadata,
+                notes=UNDO_VERSION_NOTE,
+            )
+        except Exception:
+            return None
+
+        self._prune_hidden_versions(asset_service, int(container_asset_id))
+        return int(record.id)
+
+    def _prune_hidden_versions(self, asset_service, container_asset_id: int) -> None:
+        """Trim hidden undo snapshots beyond the configured history length."""
+
+        from ..storage import AssetService  # Local import to avoid cycles in type checkers
+
+        if not isinstance(asset_service, AssetService):  # pragma: no cover - defensive
+            return
+
+        try:
+            versions = asset_service.list_all_container_versions(container_asset_id)
+        except Exception:
+            return
+
+        hidden_versions = [
+            record for record in versions if asset_service.is_hidden_undo_version(record)
+        ]
+        excess = len(hidden_versions) - self._max_entries
+        if excess <= 0:
+            return
+
+        hidden_versions.sort(key=lambda record: record.created_at)
+        for record in hidden_versions[:excess]:
+            try:
+                asset_service.delete_container_version(record.id)
+            except Exception:  # pragma: no cover - best effort cleanup
+                continue
+
     def _restore_deleted_entry(self, payload: dict[str, Any], asset_service) -> str | None:
         from ..storage import AssetService  # Local import to avoid cycles in type checkers
 
@@ -152,6 +223,12 @@ class ActionHistory:
         container_asset_id = payload.get("container_asset_id")
         container_asset_path = payload.get("container_asset_path")
         asset_snapshot = payload.get("asset_snapshot")
+        container_version_id = payload.get("container_version_id")
+
+        if container_version_id is not None:
+            version = asset_service.get_container_version(int(container_version_id))
+            if version is not None:
+                metadata = version.metadata
 
         if trash_path and trash_path.exists():
             original_path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,6 +277,12 @@ class ActionHistory:
         container_asset_id = payload.get("container_asset_id")
         container_asset_path = payload.get("container_asset_path")
         asset_snapshot = payload.get("asset_snapshot")
+        container_version_id = payload.get("container_version_id")
+
+        if container_version_id is not None:
+            version = asset_service.get_container_version(int(container_version_id))
+            if version is not None:
+                metadata_before = version.metadata
 
         if original_path.exists():
             if trash_path is None:

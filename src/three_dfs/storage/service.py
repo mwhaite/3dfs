@@ -38,10 +38,19 @@ from .repository import (
 __all__ = [
     "AssetSeed",
     "AssetService",
+    "UNDO_VERSION_NAME_PREFIX",
+    "UNDO_VERSION_NOTE",
     "TagGraph",
     "TagGraphLink",
     "TagGraphNode",
 ]
+
+
+UNDO_VERSION_NAME_PREFIX = "__undo__"
+"""Prefix applied to hidden undo versions so they stay out of the UI."""
+
+UNDO_VERSION_NOTE = "undo_snapshot"
+"""Marker stored in the notes field to identify undo-only versions."""
 
 
 logger = logging.getLogger(__name__)
@@ -330,7 +339,20 @@ class AssetService:
         )
 
     def list_container_versions(self, container_asset_id: int) -> list[ContainerVersionRecord]:
-        """Return stored versions for *container_asset_id*."""
+        """Return stored versions for *container_asset_id*.
+
+        Hidden undo snapshots are filtered out to keep the UI focused on
+        user-created versions. Use :meth:`list_all_container_versions` when the
+        full list (including hidden undo entries) is required.
+        """
+
+        versions = self._repository.list_container_versions(container_asset_id)
+        return [record for record in versions if not self.is_hidden_undo_version(record)]
+
+    def list_all_container_versions(
+        self, container_asset_id: int
+    ) -> list[ContainerVersionRecord]:
+        """Return every recorded version, including hidden undo snapshots."""
 
         return self._repository.list_container_versions(container_asset_id)
 
@@ -358,6 +380,14 @@ class AssetService:
         """Rename an existing container version."""
 
         return self._repository.rename_container_version(version_id, name=name)
+
+    @staticmethod
+    def is_hidden_undo_version(record: ContainerVersionRecord) -> bool:
+        """Return ``True`` when *record* is an internal undo snapshot."""
+
+        return bool(
+            record.notes and record.notes.strip() == UNDO_VERSION_NOTE
+        ) or record.name.startswith(UNDO_VERSION_NAME_PREFIX)
 
     # ------------------------------------------------------------------
     # Customization operations
