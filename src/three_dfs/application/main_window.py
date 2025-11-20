@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Mapping
+from collections.abc import Mapping
 
 from PySide6.QtCore import QCoreApplication, QFileSystemWatcher, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QAction, QColor, QPalette

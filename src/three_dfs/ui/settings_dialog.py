@@ -1,5 +1,4 @@
 """Modal dialog that exposes configurable application preferences."""
-
 from __future__ import annotations
 
 from dataclasses import replace
@@ -8,9 +7,9 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox,
-    QColorDialog,
     QCheckBox,
+    QColorDialog,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -28,9 +27,9 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.settings import (
-    AppSettings,
     DEFAULT_THEME_COLORS,
     DEFAULT_THEME_NAME,
+    AppSettings,
     ThemeColors,
 )
 from ..utils.paths import coerce_required_path
@@ -272,7 +271,7 @@ class SettingsDialog(QDialog):
             value = self._theme_colors.get(role, DEFAULT_THEME_COLORS[role])
             button.setText(value)
             button.setStyleSheet(
-                "background-color: %s; color: %s;" % (value, self._text_color_for(value))
+                f"background-color: {value}; color: {self._text_color_for(value)};"
             )
 
     def _save_theme(self) -> None:

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, Mapping
+from typing import Final
 
 from PySide6.QtCore import QSettings
 
@@ -151,7 +152,10 @@ def load_app_settings(*, fallback_root: Path) -> AppSettings:
             parsed_theme = json.loads(theme_colors_raw)
         except json.JSONDecodeError:
             parsed_theme = DEFAULT_THEME_COLORS
-        theme_colors = _coerce_color_map(parsed_theme if isinstance(parsed_theme, Mapping) else {}, DEFAULT_THEME_COLORS)
+        theme_colors = _coerce_color_map(
+            parsed_theme if isinstance(parsed_theme, Mapping) else {},
+            DEFAULT_THEME_COLORS,
+        )
     else:
         theme_colors = DEFAULT_THEME_COLORS.copy()
 
