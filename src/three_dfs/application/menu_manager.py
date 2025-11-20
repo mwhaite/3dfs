@@ -34,6 +34,12 @@ class MenuManager:
 
         file_menu = menubar.addMenu("&File")
 
+        undo_action = QAction("Undo", self._main_window)
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.triggered.connect(self._main_window._undo_last_action)
+        file_menu.addAction(undo_action)
+        file_menu.addSeparator()
+
         rescan_action = QAction("Rescan Library", self._main_window)
         rescan_action.setShortcut("F5")
         rescan_action.triggered.connect(self._main_window._library_manager.rescan_library)

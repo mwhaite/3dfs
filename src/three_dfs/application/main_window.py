@@ -25,6 +25,7 @@ from ..ui.preview_pane import PreviewPane
 from ..ui.settings_dialog import SettingsDialog
 from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
+from ..utils.undo import ActionHistory
 from .asset_manager import AssetManager
 from .container_manager import ContainerManager
 from .container_scanner import (
@@ -76,6 +77,7 @@ class MainWindow(QMainWindow):
         self._asset_manager = AssetManager(self)
 
         self._asset_service = AssetService()
+        self._undo_history = ActionHistory()
         self._library_search = LibrarySearch(service=self._asset_service)
         self._repository_list = QListWidget(self)
         self._repository_list.setObjectName("repositoryList")
@@ -98,7 +100,11 @@ class MainWindow(QMainWindow):
         self._preview_pane.tagFilterRequested.connect(self._handle_tag_filter_request)
 
         # Container pane shares the right split area via a stacked layout
-        self._container_pane = ContainerPane(self, asset_service=self._asset_service)
+        self._container_pane = ContainerPane(
+            self,
+            asset_service=self._asset_service,
+            undo_history=self._undo_history,
+        )
         self._container_pane.setObjectName("containerPane")
         # Wire container pane actions
         self._container_pane.addAttachmentsRequested.connect(self._add_container_attachments)
@@ -369,6 +375,16 @@ class MainWindow(QMainWindow):
 
     def _close_tag_graph(self, *args, **kwargs):
         self._ui_manager.close_tag_graph(*args, **kwargs)
+
+    def _undo_last_action(self) -> None:
+        if self._undo_history is None:
+            return
+        message = self._undo_history.undo_last(asset_service=self._asset_service)
+        if not message:
+            self.statusBar().showMessage("Nothing to undo", 2000)
+            return
+        self.statusBar().showMessage(message, 4000)
+        self._refresh_current_container()
 
     def _handle_tag_graph_tag_filter(self, *args, **kwargs):
         self._ui_manager.handle_tag_graph_tag_selected(*args, **kwargs)

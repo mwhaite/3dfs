@@ -21,6 +21,26 @@ def main() -> int:
 
     logger = logging.getLogger(__name__)
 
+    cli_args = [arg.lower() for arg in sys.argv[1:]]
+    if cli_args:
+        from .storage import AssetService
+        from .utils.undo import ActionHistory
+
+        history = ActionHistory()
+        service = AssetService()
+        if cli_args[0] == "undo":
+            message = history.undo_last(asset_service=service)
+            fallback = "No actions available to undo"
+        elif cli_args[0] == "redo":
+            message = history.redo_last(asset_service=service)
+            fallback = "No actions available to redo"
+        else:
+            message = None
+            fallback = None
+        if fallback is not None:
+            print(message or fallback)
+            return 0 if message else 1
+
     logger.info("Starting 3dfs application")
     app = QApplication.instance()
     owns_application = False

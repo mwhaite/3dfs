@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..storage import AssetRecord, AssetService, ContainerVersionRecord
+from ..utils.undo import ActionHistory
 from ..thumbnails import ThumbnailCache, ThumbnailGenerationError
 from .preview_pane import PreviewPane
 
@@ -118,9 +119,11 @@ class ContainerPane(QWidget):
         self,
         parent: QWidget | None = None,
         asset_service: AssetService | None = None,
+        undo_history: ActionHistory | None = None,
     ) -> None:
         super().__init__(parent)
         self._asset_service = asset_service
+        self._undo_history: ActionHistory | None = undo_history
         self._container_path: str | None = None
         self._container_asset_id: int | None = None
         self._selected_version_id: int | None = None
@@ -819,6 +822,26 @@ class ContainerPane(QWidget):
         else:
             metadata_key = None
 
+        container_metadata_before: dict[str, Any] | None = None
+        asset_snapshot: dict[str, Any] | None = None
+        if self._undo_history is not None and self._asset_service is not None:
+            container_record = self._current_container_asset()
+            if container_record and isinstance(container_record.metadata, Mapping):
+                container_metadata_before = dict(container_record.metadata)
+            entry_asset = None
+            if entry_asset_id is not None:
+                try:
+                    entry_asset = self._asset_service.get_asset(int(entry_asset_id))
+                except Exception:
+                    entry_asset = None
+            if entry_asset is None:
+                try:
+                    entry_asset = self._asset_service.get_asset_by_path(str(path))
+                except Exception:
+                    entry_asset = None
+            if entry_asset is not None:
+                asset_snapshot = self._serialize_asset(entry_asset)
+
         dialog_title = "Delete Link" if kind == "link" else "Delete File"
         if kind == "link":
             prompt = f"Remove the link '{path.name}'?" " The target container will remain on disk."
@@ -834,7 +857,10 @@ class ContainerPane(QWidget):
                 f" The original file lives in {source_container} and will be preserved."
             )
         else:
-            prompt = f"Permanently delete '{path.name}'? This cannot be undone."
+            prompt = (
+                f"Permanently delete '{path.name}'?"
+                " You can undo this from File > Undo."
+            )
         answer = QMessageBox.question(
             self,
             dialog_title,
@@ -848,7 +874,15 @@ class ContainerPane(QWidget):
         # Try to delete the physical file if it exists
         file_existed = True
         should_remove_from_disk = kind not in {"link", "linked_component"}
-        if should_remove_from_disk:
+        trash_path: Path | None = None
+        file_moved_to_trash = False
+        if should_remove_from_disk and self._undo_history is not None and path.exists():
+            try:
+                trash_path = self._undo_history.trash_file(path)
+                file_moved_to_trash = True
+            except Exception:
+                trash_path = None
+        if should_remove_from_disk and not file_moved_to_trash:
             try:
                 path.unlink()
             except OSError:
@@ -972,6 +1006,17 @@ class ContainerPane(QWidget):
                 self._asset_service.delete_asset(int(asset_id))
             except Exception as e:
                 logger.warning(f"Could not delete asset record for {path}: {e}")
+
+        if self._undo_history is not None:
+            self._undo_history.record_deletion(
+                kind=kind,
+                original_path=path,
+                trash_path=trash_path,
+                container_asset_id=self._safe_int(self._container_asset_id),
+                container_asset_path=self._container_path,
+                container_metadata=container_metadata_before,
+                asset_snapshot=asset_snapshot,
+            )
 
         row = self._components.row(item)
         if row >= 0:
@@ -1386,6 +1431,36 @@ class ContainerPane(QWidget):
         except (RecursionError, ValueError, OSError):
             return None
         return candidate
+
+    def _safe_int(self, value: object) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _current_container_asset(self) -> AssetRecord | None:
+        if self._asset_service is None:
+            return None
+        if self._container_asset_id is not None:
+            try:
+                return self._asset_service.get_asset(self._container_asset_id)
+            except Exception:
+                return None
+        if self._container_path:
+            try:
+                return self._asset_service.get_asset_by_path(self._container_path)
+            except Exception:
+                return None
+        return None
+
+    def _serialize_asset(self, asset: AssetRecord) -> dict[str, Any]:
+        return {
+            "id": asset.id,
+            "path": asset.path,
+            "label": asset.label,
+            "metadata": asset.metadata or {},
+            "tags": asset.tags or [],
+        }
 
     def _safe_name(self, raw_path: str) -> str:
         candidate = self._coerce_path(raw_path)
