@@ -1,4 +1,5 @@
 """Modal dialog that exposes configurable application preferences."""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -270,9 +271,7 @@ class SettingsDialog(QDialog):
         for role, button in self._color_buttons.items():
             value = self._theme_colors.get(role, DEFAULT_THEME_COLORS[role])
             button.setText(value)
-            button.setStyleSheet(
-                f"background-color: {value}; color: {self._text_color_for(value)};"
-            )
+            button.setStyleSheet(f"background-color: {value}; color: {self._text_color_for(value)};")
 
     def _save_theme(self) -> None:
         if self._theme_name_input is None or self._theme_combo is None:
