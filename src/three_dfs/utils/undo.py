@@ -125,18 +125,16 @@ class ActionHistory:
         if not self._redo_stack:
             return None
         action = self._redo_stack.pop()
+        message: str | None = None
         if action.kind == "delete_entry":
-            payload = action.payload
-            original = Path(payload.get("original_path") or "")
-            trash_path = Path(payload.get("trash_path") or "") if payload.get("trash_path") else None
-            if original.exists():
-                if trash_path is None:
-                    trash_path = self.trash_root / original.name
-                trash_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(original), str(trash_path))
-            self.record_action(action)
-            return f"Re-applied deletion for {original.name}" if original.name else "Re-applied deletion"
-        return None
+            message = self._reapply_deleted_entry(action.payload, asset_service)
+        else:
+            message = f"No redo handler for '{action.kind}'"
+
+        if message is not None:
+            self._undo_stack.append(action)
+            self._save()
+        return message
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -188,6 +186,64 @@ class ActionHistory:
                 asset_service.update_asset(container.id, metadata=metadata)
 
         return f"Restored {original_path.name}" if original_path.name else "Restored entry"
+
+    def _reapply_deleted_entry(self, payload: dict[str, Any], asset_service) -> str | None:
+        from ..storage import AssetService  # Local import to avoid cycles in type checkers
+
+        if not isinstance(asset_service, AssetService):  # pragma: no cover - defensive
+            return None
+
+        original_path = Path(payload.get("original_path") or "")
+        trash_value = payload.get("trash_path")
+        trash_path = Path(trash_value) if isinstance(trash_value, str) else None
+        metadata_before = payload.get("container_metadata")
+        container_asset_id = payload.get("container_asset_id")
+        container_asset_path = payload.get("container_asset_path")
+        asset_snapshot = payload.get("asset_snapshot")
+
+        if original_path.exists():
+            if trash_path is None:
+                trash_path = self.trash_root / original_path.name
+            trash_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(original_path), str(trash_path))
+
+        if isinstance(asset_snapshot, dict):
+            snapshot_path = asset_snapshot.get("path")
+            existing = asset_service.get_asset_by_path(snapshot_path) if snapshot_path else None
+            if existing is not None:
+                asset_service.delete_asset(existing.id)
+
+        container = None
+        if metadata_before is not None:
+            if container_asset_id is not None:
+                container = asset_service.get_asset(int(container_asset_id))
+            if container is None and container_asset_path:
+                container = asset_service.get_asset_by_path(container_asset_path)
+            if container is not None and isinstance(container.metadata, dict):
+                updated_metadata = self._remove_path_from_metadata(container.metadata, str(original_path))
+                asset_service.update_asset(container.id, metadata=updated_metadata)
+
+        return f"Re-applied deletion for {original_path.name}" if original_path.name else "Re-applied deletion"
+
+    @staticmethod
+    def _remove_path_from_metadata(metadata: dict[str, Any], path: str) -> dict[str, Any]:
+        updated: dict[str, Any] = {}
+        for key, value in metadata.items():
+            if isinstance(value, list):
+                filtered: list[Any] = []
+                for entry in value:
+                    if isinstance(entry, dict) and str(entry.get("path") or "") == path:
+                        continue
+                    if isinstance(entry, str) and entry == path:
+                        continue
+                    filtered.append(entry)
+                if filtered:
+                    updated[key] = filtered
+            elif isinstance(value, dict) and str(value.get("path") or "") == path:
+                continue
+            else:
+                updated[key] = value
+        return updated
 
     def _load(self) -> None:
         if not self._history_path.exists():

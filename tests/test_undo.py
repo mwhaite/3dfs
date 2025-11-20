@@ -63,23 +63,42 @@ def test_redo_reapplies_deletion(tmp_path):
     service = AssetService(repository)
     history = ActionHistory(history_path=tmp_path / "history.json", trash_root=tmp_path / "trash")
 
-    target_file = tmp_path / "note.txt"
+    container_path = tmp_path / "container"
+    container_path.mkdir()
+    target_file = container_path / "note.txt"
     target_file.write_text("abc")
+
+    container_asset = service.create_asset(
+        str(container_path),
+        label="Container",
+        metadata={"files": [{"path": str(target_file)}]},
+    )
     trash_path = history.trash_file(target_file)
     history.record_deletion(
         kind="file",
         original_path=target_file,
         trash_path=trash_path,
-        container_asset_id=None,
-        container_asset_path=None,
-        container_metadata=None,
+        container_asset_id=container_asset.id,
+        container_asset_path=container_asset.path,
+        container_metadata=container_asset.metadata,
         asset_snapshot={"path": str(target_file), "label": "note", "metadata": {}, "tags": []},
     )
 
+    # Simulate removal from metadata
+    service.update_asset(container_asset.id, metadata={})
+
     history.undo_last(asset_service=service)
     assert target_file.exists()
+    assert service.get_asset_by_path(str(target_file)) is not None
+    restored_container = service.get_asset(container_asset.id)
+    assert restored_container is not None
+    assert restored_container.metadata.get("files")
 
     message = history.redo_last(asset_service=service)
     assert message is not None
     assert not target_file.exists()
+    assert service.get_asset_by_path(str(target_file)) is None
+    updated_container = service.get_asset(container_asset.id)
+    assert updated_container is not None
+    assert not updated_container.metadata.get("files")
 
