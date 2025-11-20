@@ -58,6 +58,8 @@ _PRIMARY_ROLE = Qt.UserRole + 4
 
 # Accent color for automatic links (customized containers, symlinks, etc.)
 _AUTOMATIC_LINK_COLOR = QColor(236, 72, 153)
+_SECTION_CONTENT_MARGINS = (8, 24, 8, 8)
+_SECTION_SPACING = 6
 
 
 @dataclass(slots=True)
@@ -163,21 +165,29 @@ class ContainerPane(QWidget):
 
         self._components_group = QGroupBox("Components")
         components_layout = QVBoxLayout()
+        components_layout.setContentsMargins(*_SECTION_CONTENT_MARGINS)
+        components_layout.setSpacing(_SECTION_SPACING)
         components_layout.addWidget(self._components)
         self._components_group.setLayout(components_layout)
 
         self._attachments_group = QGroupBox("Attachments")
         attachments_layout = QVBoxLayout()
+        attachments_layout.setContentsMargins(*_SECTION_CONTENT_MARGINS)
+        attachments_layout.setSpacing(_SECTION_SPACING)
         attachments_layout.addWidget(self._attachments)
         self._attachments_group.setLayout(attachments_layout)
 
         self._linked_here_group = QGroupBox("Linked Here")
         linked_here_layout = QVBoxLayout()
+        linked_here_layout.setContentsMargins(*_SECTION_CONTENT_MARGINS)
+        linked_here_layout.setSpacing(_SECTION_SPACING)
         linked_here_layout.addWidget(self._linked_here)
         self._linked_here_group.setLayout(linked_here_layout)
 
         self._links_group = QGroupBox("Links")
         links_layout = QVBoxLayout()
+        links_layout.setContentsMargins(*_SECTION_CONTENT_MARGINS)
+        links_layout.setSpacing(_SECTION_SPACING)
         links_layout.addWidget(self._links)
         self._links_group.setLayout(links_layout)
 
