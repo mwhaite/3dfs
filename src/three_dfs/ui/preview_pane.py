@@ -97,6 +97,15 @@ _IMAGE_EXTENSIONS: frozenset[str] = frozenset(
 
 _MODEL_EXTENSIONS: frozenset[str] = SUPPORTED_EXTENSIONS
 
+_CHITUBOX_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".cbddlp",
+        ".ctb",
+        ".photon",
+        ".photons",
+    }
+)
+
 _TEXT_PREVIEW_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".cfg",
@@ -1913,7 +1922,7 @@ def _textual_thumbnail_message(role: str | None) -> str:
 
 def _extract_text_preview(path: Path, mime_type: str | None, *, max_bytes: int) -> tuple[str | None, str | None, bool]:
     suffix = path.suffix.lower()
-    if suffix in _IMAGE_EXTENSIONS or suffix in _MODEL_EXTENSIONS:
+    if suffix in _IMAGE_EXTENSIONS or suffix in _MODEL_EXTENSIONS or suffix in _CHITUBOX_EXTENSIONS:
         return None, None, False
 
     try:
@@ -2043,6 +2052,21 @@ def _build_preview_outcome(
             path=path,
             metadata=metadata,
             thumbnail_bytes=thumbnail_bytes,
+            text_content=text_content,
+            text_role=text_role,
+            text_truncated=truncated,
+        )
+
+    if suffix in _CHITUBOX_EXTENSIONS:
+        (preview_metadata, thumbnail_bytes, message, preview_info) = _build_chitubox_preview(path)
+        metadata.extend(preview_metadata)
+        return PreviewOutcome(
+            path=path,
+            metadata=metadata,
+            thumbnail_bytes=thumbnail_bytes,
+            thumbnail_message=message,
+            thumbnail_info=preview_info,
+            asset_record=asset_record,
             text_content=text_content,
             text_role=text_role,
             text_truncated=truncated,
@@ -2226,6 +2250,97 @@ def _build_image_preview(path: Path) -> tuple[list[tuple[str, str]], bytes]:
         buffer = io.BytesIO()
         thumbnail.save(buffer, format="PNG")
         return metadata, buffer.getvalue()
+
+
+def _build_chitubox_preview(path: Path) -> tuple[list[tuple[str, str]], bytes | None, str | None, dict[str, Any] | None]:
+    metadata: list[tuple[str, str]] = []
+    suffix = path.suffix.upper().lstrip(".")
+    metadata.append(("Type", f"SLA Print ({suffix})" if suffix else "SLA Print"))
+
+    extracted = _extract_chitubox_image(path)
+    if extracted is None:
+        return metadata, None, "No embedded preview available for this file.", None
+
+    payload, content_type = extracted
+
+    try:
+        with Image.open(io.BytesIO(payload)) as image:
+            preview = image.convert("RGBA")
+            metadata.append(("Preview Format", content_type))
+            metadata.append(("Preview Dimensions", f"{preview.width}×{preview.height}"))
+
+            thumbnail = preview.copy()
+            thumbnail.thumbnail((768, 768), _RESAMPLING_FILTER)
+            buffer = io.BytesIO()
+            thumbnail.save(buffer, format="PNG")
+
+            info = {
+                "source": "embedded_preview",
+                "content_type": content_type,
+                "dimensions": [preview.width, preview.height],
+            }
+
+            return metadata, buffer.getvalue(), "Embedded preview extracted from Chitubox file.", info
+    except Exception:
+        logger.exception("Failed to decode embedded preview for %s", path)
+        return metadata, None, "Unable to decode embedded preview for this file.", None
+
+
+def _extract_chitubox_image(path: Path) -> tuple[bytes, str] | None:
+    png_signature = b"\x89PNG\r\n\x1a\n"
+    png_end = b"IEND\xaeB`\x82"
+    jpeg_signature = b"\xff\xd8\xff"
+    jpeg_end = b"\xff\xd9"
+
+    signatures = (
+        (png_signature, png_end, "image/png"),
+        (jpeg_signature, jpeg_end, "image/jpeg"),
+    )
+
+    buffer = b""
+    start_info: tuple[int, bytes, bytes, str] | None = None
+    max_signature = max(len(sig[0]) for sig in signatures)
+    chunk_size = 512 * 1024
+    max_scan_bytes = 200 * 1024 * 1024
+
+    try:
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+
+                buffer += chunk
+
+                if start_info is None:
+                    matches: list[tuple[int, bytes, bytes, str]] = []
+                    for start, end, mime in signatures:
+                        idx = buffer.find(start)
+                        if idx != -1:
+                            matches.append((idx, start, end, mime))
+
+                    if matches:
+                        start_info = min(matches, key=lambda item: item[0])
+                        start_idx, start_sig, _, _ = start_info
+                        if start_idx > 0:
+                            buffer = buffer[start_idx:]
+
+                if start_info is not None:
+                    _, start_sig, end_sig, mime = start_info
+                    end_idx = buffer.find(end_sig, len(start_sig))
+                    if end_idx != -1:
+                        end_idx += len(end_sig)
+                        return buffer[:end_idx], mime
+
+                if start_info is None and len(buffer) > max_signature * 4:
+                    buffer = buffer[-max_signature * 4 :]
+
+                if len(buffer) > max_scan_bytes:
+                    break
+    except OSError:
+        return None
+
+    return None
 
 
 def _extract_customizer_preview(
@@ -2800,6 +2915,8 @@ def _classify_kind(path: Path, text_role: str | None = None) -> str:
         return "Image"
     if suffix in _MODEL_EXTENSIONS:
         return "3D Model"
+    if suffix in _CHITUBOX_EXTENSIONS:
+        return "SLA Print"
     if suffix in GCODE_EXTENSIONS:
         return "G-code Program"
     if text_role == "openscad":

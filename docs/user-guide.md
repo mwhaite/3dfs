@@ -19,6 +19,8 @@ Selecting an asset populates the preview pane with metadata and a set of tabs:
 
 Tabs disable themselves automatically when decoding fails; tooltips capture the failure reason so you can resolve missing codecs or oversized binaries.
 
+Chitubox-format resin print files (`.ctb`, `.cbddlp`, `.photon`, `.photons`) surface their embedded preview imagery directly in the **Thumbnail** tab when available, keeping SLA/DLP jobs discoverable without opening a slicer.
+
 ## Project workspace
 
 Projects open in a dedicated pane that groups the container’s components, attachments, arrangement scripts, outgoing links, and inbound **Linked Here** references. Containers are flat: every file and link lives at the root of the project directory. Filesystem watchers keep the pane in sync with on-disk changes so new files appear after a short debounce and stale metadata is removed automatically.

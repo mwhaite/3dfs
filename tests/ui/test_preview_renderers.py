@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import io
+
+from PIL import Image
 
 import pytest
 
@@ -67,5 +70,26 @@ def test_build123d_script_detected(qapp, tmp_path):
     assert ("Kind", "Build123D Script") in outcome.metadata
     assert preview._tabs.tabText(preview._text_tab_index) == "Build123D"
     assert preview._tabs.isTabEnabled(preview._text_tab_index)
+
+    preview.deleteLater()
+
+
+def test_chitubox_preview_extracted(qapp, tmp_path):
+    preview_image = Image.new("RGB", (32, 24), (255, 0, 0))
+    buffer = io.BytesIO()
+    preview_image.save(buffer, format="PNG")
+
+    file_path = tmp_path / "job.ctb"
+    file_path.write_bytes(b"CTB" + buffer.getvalue() + b"\x00\x00")
+
+    preview = PreviewPane(base_path=tmp_path)
+    outcome = _apply_outcome_sync(preview, file_path)
+
+    qapp.processEvents()
+
+    assert outcome.thumbnail_bytes is not None
+    assert ("Kind", "SLA Print") in outcome.metadata
+    assert ("Type", "SLA Print (CTB)") in outcome.metadata
+    assert preview._tabs.isTabEnabled(preview._thumbnail_tab_index)
 
     preview.deleteLater()
