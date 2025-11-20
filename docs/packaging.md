@@ -8,9 +8,9 @@
 python scripts/build_appimage.py --appimagetool /path/to/appimagetool
 ```
 
-The helper invokes PyInstaller to create a one-folder build of `three_dfs.app`, copies launchers and metadata from `appimage/` into a fresh `AppDir`, and runs `appimagetool` when provided to emit `dist/linux/three-dfs-<version>.AppImage`.
+The helper stages the sources directly into an AppDir, injects launchers and metadata from `appimage/`, and runs `appimagetool` (when available) to emit `dist/linux/three-dfs-<version>.AppImage`. No PyInstaller step is involved; the AppDir contains the project in editable form plus its dependencies.
 
-Use `--skip-appimagetool` to leave a ready-to-package `AppDir` on disk or `--allow-non-linux` when running in CI environments that emulate Linux. Pass `--collect-all` and `--hidden-import` flags directly to PyInstaller for additional tweaks. Clear error messages explain when dependencies such as PyInstaller or `appimagetool` are missing.
+Use `--skip-appimagetool` to leave a ready-to-package `AppDir` on disk or `--allow-non-linux` when running in CI environments that emulate Linux. Point `--appimagetool` at a downloaded binary to produce the final artifact. Clear error messages explain when dependencies such as `appimagetool` are missing.
 
 ## Linux Flatpak
 
@@ -34,22 +34,17 @@ The script stages the project, copies launcher metadata from `packaging/deb/`, a
 python scripts/build_windows_bundle.py --zip --bundle-openscad "C:\\Program Files\\OpenSCAD\\openscad.exe"
 ```
 
-Run the script from a Windows virtual environment. It mirrors the recommended PyInstaller settings for Qt applications and accepts extra flags:
-
-- `--onefile` – emit a single-file executable instead of the default folder build.
-- `--icon` – provide a `.ico` file used as the Windows application icon.
-- `--bundle-openscad` – copy an existing `openscad.exe` into the bundle so the OpenSCAD backend works out of the box.
-- `--zip` – archive the output directory after a successful build.
-
-Results are written to `dist/windows/`.
+Run from a Windows virtual environment. The GitHub workflow invokes `python -m cx_Freeze build` and zips the resulting folder to `dist/windows/three-dfs-windows.zip`. Provide the same command locally (after `pip install .[build123d] cx_Freeze`) to mirror the build.
 
 ## macOS bundle
 
 ```bash
-python scripts/build_macos_bundle.py --create-dmg
+python scripts/build_macos_bundle.py
 ```
 
-Run on macOS. The helper constructs a `.app` bundle under `dist/macos/` and optionally wraps it in a DMG when `--create-dmg` is supplied. Use `--help` for codesign, icon, and notarisation options.
+Run on macOS with the PyObjC toolchain installed (use `pip install -r packaging/macos/requirements.txt` to grab `py2app` and the Cocoa/Quartz bridges). The helper reads `pyproject.toml`, cleans previous artifacts, runs `py2app`, and emits both `dist/macos/three-dfs.app` and `dist/macos/three-dfs-<version>.dmg`. There are no flags or optional modes—the script always performs the full packaging step the CI workflow runs.
+
+> **Note:** build123d/pyocc is not bundled on macOS because the upstream wheels do not support Apple Silicon yet. All other customizer features remain available, but operations that rely on the build123d backend are skipped and surface a clear warning. Linux/Windows builds continue to ship the dependency via the optional `build123d` extra.
 
 ## Continuous integration
 

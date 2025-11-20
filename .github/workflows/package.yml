@@ -37,7 +37,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip wheel
-          pip install . pyinstaller
+          pip install '.[build123d]'
 
       - name: Download appimagetool
         run: |
@@ -78,10 +78,11 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip wheel
-          pip install . pyinstaller
+          pip install .
+          pip install -r packaging/macos/requirements.txt
 
       - name: Build macOS bundle
-        run: python scripts/build_macos_bundle.py --create-dmg --dmg-name three-dfs.dmg
+        run: python scripts/build_macos_bundle.py
 
       - name: Archive macOS artifacts
         uses: actions/upload-artifact@v4
@@ -108,11 +109,14 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip wheel
-          pip install . pyinstaller
+          pip install .[build123d] cx_freeze
 
       - name: Build Windows bundle
         shell: pwsh
-        run: python scripts/build_windows_bundle.py --zip
+        run: |
+          python -m cx_Freeze build
+          New-Item -ItemType Directory -Force -Path dist/windows | Out-Null
+          Compress-Archive -Path build/exe.win-amd64-3.11/* -DestinationPath dist/windows/three-dfs-windows.zip -Force
 
       - name: Archive Windows artifacts
         uses: actions/upload-artifact@v4
@@ -120,5 +124,4 @@ jobs:
           name: windows-packages
           path: |
             dist/windows/**/*.zip
-            dist/windows/**/*.exe
           if-no-files-found: error

@@ -1,0 +1,6 @@
+py2app>=0.28
+pyobjc-core>=10.1
+pyobjc-framework-Cocoa>=10.1
+pyobjc-framework-Quartz>=10.1
+pyobjc-framework-CoreServices>=10.1
+pyobjc-framework-LaunchServices>=10.1

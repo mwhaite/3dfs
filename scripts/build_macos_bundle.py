@@ -1,240 +1,220 @@
 #!/usr/bin/env python3
-"""Build a macOS .app bundle (and optional DMG) for 3dfs using PyInstaller."""
+"""Build the macOS application bundle and DMG via py2app."""
 
 from __future__ import annotations
 
-import argparse
-import platform
+import os
+import shlex
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ENTRY_SCRIPT = PROJECT_ROOT / "src" / "three_dfs" / "app.py"
-DEFAULT_BUILD_DIR = PROJECT_ROOT / "build" / "macos"
-DEFAULT_DIST_DIR = PROJECT_ROOT / "dist" / "macos"
-DEFAULT_SPEC_DIR = DEFAULT_BUILD_DIR
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - fallback for Python <=3.10
+    import tomli as tomllib  # type: ignore[assignment]
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT / "src"
+ENTRY_SCRIPT = ROOT / "scripts/three_dfs_entry.py"
+PYPROJECT = ROOT / "pyproject.toml"
+DEFAULT_BUILD_DIR = ROOT / "build" / "macos"
 
 
-class PackagingError(RuntimeError):
-    """Raised when the macOS packaging workflow cannot be completed."""
+def log(message: str) -> None:
+    """Display a prefixed status message."""
+    print(f"[macos] {message}")
 
 
-def _ensure_pyinstaller() -> None:
+def run_command(command: list[str], *, cwd: Path | None = None) -> None:
+    """Run a subprocess with logging."""
+    pretty = " ".join(shlex.quote(part) for part in command)
+    log(f"$ {pretty}")
+    subprocess.run(command, check=True, cwd=str(cwd or ROOT))
+
+
+def ensure_macos() -> None:
+    if sys.platform != "darwin":  # pragma: no cover - GitHub runner enforces this
+        raise SystemExit("macOS packaging must run on macOS.")
+
+
+def ensure_py2app_installed() -> None:
     try:
-        import PyInstaller  # noqa: F401  (imported for availability check)
-    except ModuleNotFoundError as exc:  # pragma: no cover - defensive branch
-        raise PackagingError(
-            "PyInstaller is required. Install it with 'python -m pip install pyinstaller'."
+        import py2app  # noqa: F401  # pylint: disable=import-outside-toplevel, unused-import
+    except ImportError as exc:  # pragma: no cover - depends on runner state
+        raise SystemExit("py2app is missing. Install it via packaging/macos/requirements.txt.") from exc
+
+
+def ensure_pyobjc_installed() -> None:
+    try:
+        import Cocoa  # type: ignore  # noqa: F401  # pylint: disable=import-outside-toplevel, unused-import
+        import Quartz  # type: ignore  # noqa: F401  # pylint: disable=import-outside-toplevel, unused-import
+        import LaunchServices  # type: ignore  # noqa: F401  # pylint: disable=import-outside-toplevel, unused-import
+    except ImportError as exc:  # pragma: no cover
+        raise SystemExit(
+            "PyObjC frameworks missing. Install pyobjc-core, pyobjc-framework-Cocoa, "
+            "pyobjc-framework-Quartz, and pyobjc-framework-LaunchServices"
         ) from exc
 
 
-def _build_command(
+def read_pyproject() -> dict[str, Any]:
+    if not PYPROJECT.exists():
+        raise SystemExit("pyproject.toml not found. Run from the repository root.")
+    return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+
+
+def normalize_options(raw: dict[str, Any]) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in {"dist-dir", "plist"}:
+            continue
+        options[key.replace("-", "_")] = value
+    return options
+
+
+def prepare_configuration() -> tuple[str, str, dict[str, Any], dict[str, Any], Path, Path, str]:
+    pyproject = read_pyproject()
+    project = pyproject.get("project", {})
+    project_name = project.get("name", "three-dfs")
+    project_version = project.get("version", "0.0.0")
+
+    tool_section = pyproject.get("tool", {})
+    py2app_section = dict(tool_section.get("py2app", {}))
+    plist_cfg = dict(py2app_section.pop("plist", {}))
+    py2app_options = normalize_options(py2app_section)
+
+    bundle_name = plist_cfg.get("CFBundleName") or project_name
+
+    dist_dir = Path(py2app_section.get("dist-dir", "dist/macos"))
+    if not dist_dir.is_absolute():
+        dist_dir = ROOT / dist_dir
+    build_dir = DEFAULT_BUILD_DIR
+
+    if plist_cfg:
+        plist_cfg.setdefault("CFBundleName", bundle_name)
+        plist_cfg.setdefault("CFBundleDisplayName", bundle_name)
+        plist_cfg.setdefault("CFBundleIdentifier", f"io.open3dfs.{bundle_name.replace('-', '')}")
+        plist_cfg["CFBundleVersion"] = project_version
+        plist_cfg["CFBundleShortVersionString"] = project_version
+        py2app_options["plist"] = plist_cfg
+
+    return project_name, project_version, py2app_options, plist_cfg, dist_dir, build_dir, bundle_name
+
+
+def clean_previous_outputs(dist_dir: Path, build_dir: Path, bundle_name: str, dmg_name: str) -> None:
+    shutil.rmtree(build_dir, ignore_errors=True)
+    shutil.rmtree(dist_dir / f"{bundle_name}.app", ignore_errors=True)
+    target_dmg = dist_dir / dmg_name
+    if target_dmg.exists():
+        target_dmg.unlink()
+
+
+def build_bundle(
     *,
-    name: str,
+    project_name: str,
+    project_version: str,
+    entry_script: Path,
+    py2app_options: dict[str, Any],
     dist_dir: Path,
     build_dir: Path,
-    spec_dir: Path,
-    extra_collect_all: Iterable[str],
-    extra_hidden_imports: Iterable[str],
-    icon: Path | None,
-) -> list[str]:
-    command: list[str] = [
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        "--name",
-        name,
-        "--windowed",
-        "--noconsole",
-        "--clean",
-        "--distpath",
-        str(dist_dir),
-        "--workpath",
-        str(build_dir),
-        "--specpath",
-        str(spec_dir),
-    ]
+    bundle_name: str,
+) -> Path:
+    ensure_pyobjc_installed()
+    ensure_py2app_installed()
 
-    collect_targets: Sequence[str] = (
-        "shiboken6",
-        "trimesh",
-        "build123d",
-        "PIL",
-        "numpy",
-        "sqlalchemy",
-    )
-    for target in collect_targets:
-        command.extend(("--collect-all", target))
-    for target in extra_collect_all:
-        command.extend(("--collect-all", target))
+    if not entry_script.exists():
+        raise SystemExit(f"Entry script not found: {entry_script}")
 
-    hidden_imports: Sequence[str] = ("OpenGL",)
-    for module in hidden_imports:
-        command.extend(("--hidden-import", module))
-    for module in extra_hidden_imports:
-        command.extend(("--hidden-import", module))
+    os.chdir(ROOT)
+    sys.path.insert(0, str(SRC_DIR))
 
-    if icon is not None:
-        command.extend(("--icon", str(icon)))
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    build_dir.mkdir(parents=True, exist_ok=True)
 
-    if not ENTRY_SCRIPT.exists():
-        raise PackagingError(f"Entry script not found: {ENTRY_SCRIPT}")
-    command.append(str(ENTRY_SCRIPT))
-    return command
+    script_args = ["py2app", "--dist-dir", str(dist_dir), "--bdist-base", str(build_dir)]
 
+    log("Running py2app")
+    from setuptools import setup  # pylint: disable=import-outside-toplevel
 
-def _run_pyinstaller(command: Sequence[str]) -> None:
-    result = subprocess.run(command, check=False)
-    if result.returncode != 0:
-        raise PackagingError("PyInstaller exited with a non-zero status.")
+    try:
+        setup(
+            name=project_name,
+            version=project_version,
+            app=[str(entry_script)],
+            options={"py2app": py2app_options},
+            setup_requires=["py2app"],
+            script_args=script_args,
+        )
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on runner state
+        missing = getattr(exc, "name", str(exc))
+        raise SystemExit(
+            f"py2app failed while importing '{missing}'. "
+            "Ensure this dependency installs cleanly before packaging."
+        ) from exc
+
+    produced = dist_dir / f"{entry_script.stem}.app"
+    final_bundle = dist_dir / f"{bundle_name}.app"
+    if produced == final_bundle:
+        return final_bundle
+
+    if not produced.exists() and final_bundle.exists():
+        # py2app already emitted the bundle with the desired name.
+        return final_bundle
+
+    if final_bundle.exists():
+        shutil.rmtree(final_bundle)
+    if produced.exists():
+        produced.rename(final_bundle)
+    return final_bundle
 
 
-def _create_dmg(bundle_root: Path, output: Path, volume_name: str) -> None:
+def create_dmg(app_bundle: Path, *, dmg_name: str, volume_name: str) -> Path:
+    dmg_path = app_bundle.parent / dmg_name
+    if not app_bundle.exists():
+        raise SystemExit(f"Cannot create DMG – app bundle missing: {app_bundle}")
     if shutil.which("hdiutil") is None:
-        raise PackagingError("hdiutil is required to create a DMG.")
-
-    if output.exists():
-        output.unlink()
-
-    cmd = [
+        raise SystemExit("hdiutil not found. Install Xcode command-line tools.")
+    dmg_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
         "hdiutil",
         "create",
         "-volname",
         volume_name,
         "-srcfolder",
-        str(bundle_root),
+        str(app_bundle),
         "-ov",
         "-format",
         "UDZO",
-        str(output),
+        str(dmg_path),
     ]
-
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        raise PackagingError("hdiutil failed to create the DMG image.")
+    run_command(command)
+    return dmg_path
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build a macOS .app bundle for 3dfs.")
-    parser.add_argument("--name", default="three-dfs", help="Name of the application bundle.")
-    parser.add_argument(
-        "--dist-dir",
-        type=Path,
-        default=DEFAULT_DIST_DIR,
-        help="Destination directory for PyInstaller output (default: dist/macos).",
-    )
-    parser.add_argument(
-        "--build-dir",
-        type=Path,
-        default=DEFAULT_BUILD_DIR,
-        help="PyInstaller working directory (default: build/macos).",
-    )
-    parser.add_argument(
-        "--spec-dir",
-        type=Path,
-        default=DEFAULT_SPEC_DIR,
-        help="Directory where the generated spec file is written (default: build/macos).",
-    )
-    parser.add_argument(
-        "--extra-collect",
-        action="append",
-        default=[],
-        help="Additional packages to pass to --collect-all.",
-    )
-    parser.add_argument(
-        "--extra-hidden-import",
-        action="append",
-        default=[],
-        help="Additional modules to add as hidden imports.",
-    )
-    parser.add_argument(
-        "--icon",
-        type=Path,
-        default=None,
-        help="Optional .icns icon file to embed in the app bundle.",
-    )
-    parser.add_argument(
-        "--create-dmg",
-        action="store_true",
-        help="Generate a compressed DMG alongside the .app bundle.",
-    )
-    parser.add_argument(
-        "--dmg-name",
-        default="three-dfs.dmg",
-        help="Filename for the DMG when --create-dmg is specified.",
-    )
-    parser.add_argument(
-        "--codesign-id",
-        default=None,
-        help="Codesign identity to apply to the .app bundle (optional).",
-    )
-    return parser.parse_args(argv)
+def main() -> None:
+    ensure_macos()
+    project_name, project_version, py2app_options, plist_cfg, dist_dir, build_dir, bundle_name = prepare_configuration()
+    dmg_name = f"{bundle_name}-{project_version}.dmg"
+    clean_previous_outputs(dist_dir, build_dir, bundle_name, dmg_name)
 
-
-def main(argv: list[str] | None = None) -> int:
-    if platform.system().lower() != "darwin":
-        raise PackagingError("This script must be run on macOS.")
-
-    args = parse_args(argv)
-    _ensure_pyinstaller()
-
-    dist_dir = args.dist_dir.resolve()
-    build_dir = args.build_dir.resolve()
-    spec_dir = args.spec_dir.resolve()
-
-    for path in (dist_dir, build_dir, spec_dir):
-        if path.exists():
-            shutil.rmtree(path)
-        path.mkdir(parents=True, exist_ok=True)
-
-    command = _build_command(
-        name=args.name,
+    app_bundle = build_bundle(
+        project_name=project_name,
+        project_version=project_version,
+        entry_script=ENTRY_SCRIPT,
+        py2app_options=py2app_options,
         dist_dir=dist_dir,
         build_dir=build_dir,
-        spec_dir=spec_dir,
-        extra_collect_all=args.extra_collect,
-        extra_hidden_imports=args.extra_hidden_import,
-        icon=args.icon,
+        bundle_name=bundle_name,
     )
 
-    print("Running:", " ".join(command))
-    _run_pyinstaller(command)
+    log("Creating DMG")
+    dmg_path = create_dmg(app_bundle, dmg_name=dmg_name, volume_name=plist_cfg.get("CFBundleDisplayName", bundle_name))
 
-    app_path = dist_dir / f"{args.name}.app"
-    if not app_path.exists():
-        raise PackagingError(f"Expected bundle {app_path} was not produced by PyInstaller.")
-
-    if args.codesign_id:
-        codesign_cmd = [
-            "codesign",
-            "--deep",
-            "--force",
-            "--options",
-            "runtime",
-            "--sign",
-            args.codesign_id,
-            str(app_path),
-        ]
-        print("Running:", " ".join(codesign_cmd))
-        result = subprocess.run(codesign_cmd)
-        if result.returncode != 0:
-            raise PackagingError("codesign failed.")
-
-    if args.create_dmg:
-        dmG_path = dist_dir / args.dmg_name
-        _create_dmg(app_path, dmG_path, volume_name=args.name)
-        print(f"DMG created at {dmG_path}")
-
-    print(f"macOS app bundle available at {app_path}")
-    return 0
+    log(f"Bundle ready: {app_bundle}")
+    log(f"DMG ready: {dmg_path}")
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    try:
-        sys.exit(main())
-    except PackagingError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+if __name__ == "__main__":
+    main()

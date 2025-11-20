@@ -8,7 +8,18 @@ metadata.  During execution the descriptors are applied to a source mesh using
 ``apply_transformations`` which relies on :mod:`build123d` for CAD operations
 and emits both STL meshes and companion OpenSCAD snippets that mirror the
 transformation pipeline.  Structured metadata such as bounding boxes and
-component statistics are recorded alongside the exported assets.
+component statistics are recorded alongside the exported assets.  Install the
+optional dependency group when you need these transformations on platforms
+that support build123d:
+
+```bash
+pip install '.[build123d]'
+```
+
+> The packaged macOS application intentionally omits build123d until Apple
+> Silicon wheels are available upstream. Customizer features still load, but
+> build123d-specific operations emit a warning and are skipped. Linux and Windows
+> builds continue to ship the dependency.
 
 ## Available operations
 

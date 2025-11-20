@@ -10,6 +10,16 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any
 
+from ..gcode import (
+    DEFAULT_GCODE_PREVIEW_SIZE,
+    GCodeAnalysis,
+    GCodePreviewCache,
+    GCodePreviewError,
+    GCodePreviewResult,
+    analyze_gcode_program,
+    extract_render_hints,
+)
+from ..importer import GCODE_EXTENSIONS
 from ..thumbnails import (
     DEFAULT_THUMBNAIL_SIZE,
     ThumbnailCache,
@@ -89,10 +99,12 @@ class AssetService:
         repository: AssetRepository | None = None,
         *,
         thumbnail_cache: ThumbnailCache | None = None,
+        gcode_preview_cache: GCodePreviewCache | None = None,
     ) -> None:
         self._repository = repository or AssetRepository()
         self._thumbnail_cache = thumbnail_cache
         self._thumbnail_manager: ThumbnailManager | None = None
+        self._gcode_preview_cache = gcode_preview_cache
 
     # ------------------------------------------------------------------
     # Basic accessors
@@ -659,11 +671,97 @@ class AssetService:
 
         return asset, result
 
+    def ensure_gcode_preview(
+        self,
+        asset: AssetRecord,
+        *,
+        size: tuple[int, int] = DEFAULT_GCODE_PREVIEW_SIZE,
+        hints: Mapping[str, str] | None = None,
+        analysis: GCodeAnalysis | None = None,
+    ) -> tuple[AssetRecord, GCodePreviewResult | None]:
+        """Ensure *asset* has a cached G-code preview returning the result."""
+
+        try:
+            source_path = Path(asset.path).expanduser()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.debug("Invalid path for asset %s: %s", asset.path, exc)
+            return asset, None
+
+        metadata = dict(asset.metadata or {})
+        existing = metadata.get("gcode_preview") if isinstance(metadata, Mapping) else None
+        existing_info = existing if isinstance(existing, Mapping) else None
+
+        hint_map = dict(hints or {})
+        if not hint_map:
+            try:
+                tag_values = self.tags_for_path(asset.path)
+            except Exception:
+                tag_values = []
+            hint_map = extract_render_hints(tag_values)
+
+        cache = self._ensure_gcode_preview_cache()
+
+        try:
+            program = analysis or analyze_gcode_program(source_path)
+        except GCodePreviewError as exc:
+            logger.debug("Unable to analyse G-code for %s: %s", asset.path, exc)
+            return asset, None
+        except Exception:  # pragma: no cover - defensive safeguard
+            logger.exception("Unexpected error while analysing G-code for %s", asset.path)
+            return asset, None
+
+        try:
+            result = cache.get_or_render(
+                source_path,
+                hints=hint_map,
+                existing_info=existing_info,
+                size=size,
+                analysis=program,
+            )
+        except GCodePreviewError as exc:
+            logger.debug("Unable to generate G-code preview for %s: %s", asset.path, exc)
+            return asset, None
+        except Exception:  # pragma: no cover - defensive safeguard
+            logger.exception("Unexpected error while generating G-code preview for %s", asset.path)
+            return asset, None
+
+        if existing_info != result.info:
+            metadata["gcode_preview"] = result.info
+            updated = self.update_asset(asset.id, metadata=metadata)
+            return updated, result
+
+        return asset, result
+
     def _ensure_thumbnail_manager(self) -> ThumbnailManager:
         if self._thumbnail_manager is None:
             cache = self._thumbnail_cache or ThumbnailCache()
             self._thumbnail_manager = ThumbnailManager(cache)
         return self._thumbnail_manager
+
+    def _ensure_gcode_preview_cache(self) -> GCodePreviewCache:
+        if self._gcode_preview_cache is None:
+            self._gcode_preview_cache = GCodePreviewCache()
+        return self._gcode_preview_cache
+
+    def ensure_all_gcode_previews(
+        self,
+        *,
+        size: tuple[int, int] = DEFAULT_GCODE_PREVIEW_SIZE,
+    ) -> int:
+        """Ensure cached previews exist for all recognised G-code assets."""
+
+        generated = 0
+        for asset in self.list_assets():
+            try:
+                suffix = Path(asset.path).suffix.lower()
+            except Exception:
+                continue
+            if suffix not in GCODE_EXTENSIONS:
+                continue
+            _, result = self.ensure_gcode_preview(asset, size=size)
+            if result is not None and result.updated:
+                generated += 1
+        return generated
 
     # ------------------------------------------------------------------
     # Convenience helpers
