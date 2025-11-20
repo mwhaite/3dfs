@@ -34,13 +34,13 @@ from .container_scanner import (
 )
 from .library_manager import LibraryManager
 from .menu_manager import MenuManager
-    from .settings import (
-        APPLICATION_NAME,
-        ORGANIZATION_NAME,
-        AppSettings,
-        load_app_settings,
-        save_app_settings,
-    )
+from .settings import (
+    APPLICATION_NAME,
+    ORGANIZATION_NAME,
+    AppSettings,
+    load_app_settings,
+    save_app_settings,
+)
 from .ui_manager import UIManager
 
 WINDOW_TITLE = "3dfs"
