@@ -2711,9 +2711,7 @@ def _format_gcode_analysis_metadata(
         "line_width",
         "workpiece_color",
     }
-    additional = {
-        key: value for key, value in hints.items() if key not in ignored_hint_keys and str(value).strip()
-    }
+    additional = {key: value for key, value in hints.items() if key not in ignored_hint_keys and str(value).strip()}
     if additional:
         formatted = ", ".join(f"{key}={value}" for key, value in sorted(additional.items()))
         entries.append(("Additional Hints", formatted))

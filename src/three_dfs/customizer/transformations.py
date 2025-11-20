@@ -7,23 +7,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from math import isclose
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
-
-if TYPE_CHECKING:  # pragma: no cover - imported only for type checkers
-    from build123d import (
-        Align as _Align,
-        BoundBox as _BoundBox,
-        Compound as _Compound,
-        Matrix as _Matrix,
-        Mesher as _Mesher,
-        Shape as _Shape,
-        Solid as _Solid,
-        Vector as _Vector,
-        export_stl as _export_stl,
-    )
-    from build123d.build_enums import Unit as _Unit
-    from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism as _BRepPrimAPI_MakePrism
-    from OCP.gp import gp_Vec as _gp_Vec
+from typing import Any, ClassVar, TypeVar
 
 Align = BoundBox = Compound = Matrix = Mesher = Shape = Solid = Vector = export_stl = None  # type: ignore[assignment]
 Unit = None  # type: ignore[assignment]
@@ -66,24 +50,20 @@ def _load_build123d() -> None:
         return
 
     try:  # pragma: no cover - depends on external installation
-        from build123d import (
-            Align as build_align,
-            BoundBox as build_bound_box,
-            Compound as build_compound,
-            Matrix as build_matrix,
-            Mesher as build_mesher,
-            Shape as build_shape,
-            Solid as build_solid,
-            Vector as build_vector,
-            export_stl as build_export_stl,
-        )
+        from build123d import Align as build_align
+        from build123d import BoundBox as build_bound_box
+        from build123d import Compound as build_compound
+        from build123d import Matrix as build_matrix
+        from build123d import Mesher as build_mesher
+        from build123d import Shape as build_shape
+        from build123d import Solid as build_solid
+        from build123d import Vector as build_vector
+        from build123d import export_stl as build_export_stl
         from build123d.build_enums import Unit as build_unit
         from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism as build_make_prism
         from OCP.gp import gp_Vec as build_gp_vec
     except ImportError as exc:  # pragma: no cover - surfaced to UI/tests
-        raise TransformationError(
-            "build123d is required to apply customizer transformations"
-        ) from exc
+        raise TransformationError("build123d is required to apply customizer transformations") from exc
 
     Align = build_align
     BoundBox = build_bound_box
