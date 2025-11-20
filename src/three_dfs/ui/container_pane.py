@@ -47,8 +47,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..storage import AssetRecord, AssetService, ContainerVersionRecord
-from ..utils.undo import ActionHistory
 from ..thumbnails import ThumbnailCache, ThumbnailGenerationError
+from ..utils.undo import ActionHistory
 from .preview_pane import PreviewPane
 
 logger = logging.getLogger(__name__)

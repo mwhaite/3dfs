@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from three_dfs.storage import AssetRepository, AssetService, UNDO_VERSION_NOTE
+from three_dfs.storage import UNDO_VERSION_NOTE, AssetRepository, AssetService
 from three_dfs.storage.database import SQLiteStorage
 from three_dfs.utils.undo import ActionHistory
 
