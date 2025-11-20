@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from PIL import Image, ImageDraw
 
 pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 
@@ -130,3 +131,24 @@ def test_nc_gcode_shows_text_preview(qapp, tmp_path):
 
     assert outcome.text_role == "text"
     assert preview._tabs.isTabEnabled(preview._text_tab_index)
+
+
+def test_pdf_preview_renders_first_page(qapp, tmp_path):
+    file_path = tmp_path / "document.pdf"
+    image = Image.new("RGB", (320, 320), color="white")
+    drawer = ImageDraw.Draw(image)
+    drawer.rectangle((24, 24, 296, 296), outline="black", width=6)
+    drawer.text((120, 150), "PDF", fill="black")
+    image.save(file_path, format="PDF")
+
+    preview = PreviewPane(base_path=tmp_path)
+    outcome = _apply_outcome_sync(preview, file_path)
+
+    qapp.processEvents()
+
+    assert ("Type", "PDF Document") in outcome.metadata
+    assert outcome.thumbnail_bytes is not None
+    assert outcome.thumbnail_bytes.startswith(b"\x89PNG")
+    assert outcome.thumbnail_message is None
+
+    preview.deleteLater()

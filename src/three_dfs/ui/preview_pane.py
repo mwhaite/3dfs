@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import io
 import logging
+import math
 import mimetypes
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -16,8 +17,11 @@ from urllib.parse import quote, unquote
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from PySide6.QtCore import (
+    QBuffer,
+    QByteArray,
     QObject,
     QRunnable,
+    QSize,
     Qt,
     QThreadPool,
     Signal,
@@ -69,6 +73,12 @@ from .customizer_panel import CustomizerPanel
 from .machine_tag_dialog import MachineTagDialog
 from .model_viewer import ModelViewer, _MeshData, load_mesh_data
 
+try:  # pragma: no cover - optional dependency when QtPdf is missing
+    from PySide6.QtPdf import QPdfDocument, QPdfDocumentRenderOptions
+except Exception:  # noqa: BLE001 - QtPdf might be unavailable on some builds
+    QPdfDocument = None  # type: ignore[assignment]
+    QPdfDocumentRenderOptions = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
     from ..storage import AssetRecord, CustomizationRecord
 
@@ -94,6 +104,8 @@ _IMAGE_EXTENSIONS: frozenset[str] = frozenset(
         ".webp",
     }
 )
+
+_PDF_EXTENSIONS: frozenset[str] = frozenset({".pdf"})
 
 _MODEL_EXTENSIONS: frozenset[str] = SUPPORTED_EXTENSIONS
 
@@ -2050,6 +2062,19 @@ def _build_preview_outcome(
             text_truncated=truncated,
         )
 
+    if suffix in _PDF_EXTENSIONS:
+        pdf_metadata, thumbnail_bytes, message = _build_pdf_preview(path, size=size)
+        metadata.extend(pdf_metadata)
+        return PreviewOutcome(
+            path=path,
+            metadata=metadata,
+            thumbnail_bytes=thumbnail_bytes,
+            thumbnail_message=message,
+            text_content=text_content,
+            text_role=text_role,
+            text_truncated=truncated,
+        )
+
     if suffix in _MODEL_EXTENSIONS:
         (
             model_metadata,
@@ -2212,6 +2237,65 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
 def _format_datetime(value: datetime) -> str:
     aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     return _format_timestamp(aware.timestamp())
+
+
+def _build_pdf_preview(
+    path: Path,
+    *,
+    size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+) -> tuple[list[tuple[str, str]], bytes | None, str | None]:
+    metadata: list[tuple[str, str]] = [("Type", "PDF Document")]
+
+    if QPdfDocument is None or QPdfDocumentRenderOptions is None:
+        return metadata, None, "PDF preview support is unavailable in this build."
+
+    document = QPdfDocument()
+    status = document.load(str(path))
+    if status != QPdfDocument.Error.None_:
+        status_name = getattr(status, "name", str(int(status)))
+        return metadata, None, f"Unable to load PDF file ({status_name})."
+
+    page_count = document.pageCount()
+    if page_count >= 0:
+        metadata.append(("Pages", str(page_count)))
+    if page_count <= 0:
+        return metadata, None, "PDF file does not contain renderable pages."
+
+    page_size = document.pagePointSize(0)
+    width_pts = page_size.width()
+    height_pts = page_size.height()
+    if width_pts <= 0 or height_pts <= 0:
+        width_pts = 612.0
+        height_pts = 792.0
+    metadata.append(("Page Size", f"{int(round(width_pts))}×{int(round(height_pts))} pt"))
+
+    max_width = max(1, size[0])
+    max_height = max(1, size[1])
+    scale = min(max_width / width_pts, max_height / height_pts)
+    if not math.isfinite(scale) or scale <= 0:
+        target = float(max(max_width, max_height))
+        scale = target / max(width_pts, height_pts)
+    pixel_width = max(1, int(round(width_pts * scale)))
+    pixel_height = max(1, int(round(height_pts * scale)))
+    render_size = QSize(pixel_width, pixel_height)
+
+    options = QPdfDocumentRenderOptions()
+    options.setRenderFlags(QPdfDocumentRenderOptions.RenderFlag.Annotations)
+    image = document.render(0, render_size, options)
+    if image.isNull():
+        return metadata, None, "PDF preview could not be rendered."
+
+    byte_array = QByteArray()
+    buffer = QBuffer(byte_array)
+    if not buffer.open(QBuffer.WriteOnly):
+        return metadata, None, "Unable to allocate buffer for PDF preview."
+    try:
+        if not image.save(buffer, "PNG"):
+            return metadata, None, "PDF preview could not be encoded."
+    finally:
+        buffer.close()
+
+    return metadata, bytes(byte_array), None
 
 
 def _build_image_preview(path: Path) -> tuple[list[tuple[str, str]], bytes]:
