@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 
 from PySide6.QtCore import QCoreApplication, QFileSystemWatcher, Qt, QThreadPool, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -157,6 +158,7 @@ class MainWindow(QMainWindow):
             self._rescan_library()
         # Apply persisted interface preferences
         self._toggle_repository_sidebar(self._settings.show_repository_sidebar)
+        self._apply_theme_palette(self._settings.resolved_theme_colors())
 
     def _is_safe_path_string(self, path_str: str) -> bool:
         """Validate that a path string is safe before any Path operations."""
@@ -285,6 +287,59 @@ class MainWindow(QMainWindow):
         if new_settings.text_preview_limit != previous.text_preview_limit:
             self._preview_pane.set_text_preview_limit(new_settings.text_preview_limit)
             self._preview_pane.reload_current_preview()
+
+        if (
+            new_settings.theme_name != previous.theme_name
+            or new_settings.theme_colors != previous.theme_colors
+            or new_settings.custom_themes != previous.custom_themes
+        ):
+            self._apply_theme_palette(new_settings.resolved_theme_colors())
+
+    def _apply_theme_palette(self, colors: Mapping[str, str]) -> None:
+        def _color_for(key: str, fallback: str) -> QColor:
+            value = colors.get(key, fallback) if isinstance(colors, Mapping) else fallback
+            candidate = QColor(value)
+            return candidate if candidate.isValid() else QColor(fallback)
+
+        window_color = _color_for("window", "#202124")
+        panel_color = _color_for("panel", "#2b2c30")
+        accent_color = _color_for("accent", "#5c9cff")
+        text_color = _color_for("text", "#f0f0f0")
+
+        palette = self.palette()
+        palette.setColor(QPalette.Window, window_color)
+        palette.setColor(QPalette.Base, panel_color)
+        palette.setColor(QPalette.AlternateBase, panel_color.lighter(115))
+        palette.setColor(QPalette.Button, panel_color)
+        palette.setColor(QPalette.ButtonText, text_color)
+        palette.setColor(QPalette.Text, text_color)
+        palette.setColor(QPalette.WindowText, text_color)
+        palette.setColor(QPalette.BrightText, text_color)
+        palette.setColor(QPalette.ToolTipBase, panel_color)
+        palette.setColor(QPalette.ToolTipText, text_color)
+        palette.setColor(QPalette.Highlight, accent_color)
+        palette.setColor(QPalette.Link, accent_color)
+        palette.setColor(QPalette.LinkVisited, accent_color.darker(110))
+        self.setPalette(palette)
+
+        stylesheet = f"""
+        QWidget {{ color: {text_color.name()}; }}
+        QMainWindow, QDialog, QTabWidget::pane {{ background-color: {window_color.name()}; }}
+        QGroupBox, QLineEdit, QListWidget, QTreeView, QTableView, QTextEdit, QComboBox, QPushButton {{
+            background-color: {panel_color.name()};
+            color: {text_color.name()};
+            border: 1px solid {panel_color.darker(115).name()};
+        }}
+        QPushButton:hover, QToolButton:hover {{
+            background-color: {accent_color.name()};
+            color: {window_color.name()};
+        }}
+        QLineEdit, QListWidget::item:selected, QTreeView::item:selected, QTableView::item:selected {{
+            selection-background-color: {accent_color.name()};
+            selection-color: {window_color.name()};
+        }}
+        """
+        self.setStyleSheet(stylesheet)
 
     def _show_repo_context_menu(self, *args, **kwargs):
         self._menu_manager.show_repo_context_menu(*args, **kwargs)
