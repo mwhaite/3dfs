@@ -349,9 +349,7 @@ class AssetService:
         versions = self._repository.list_container_versions(container_asset_id)
         return [record for record in versions if not self.is_hidden_undo_version(record)]
 
-    def list_all_container_versions(
-        self, container_asset_id: int
-    ) -> list[ContainerVersionRecord]:
+    def list_all_container_versions(self, container_asset_id: int) -> list[ContainerVersionRecord]:
         """Return every recorded version, including hidden undo snapshots."""
 
         return self._repository.list_container_versions(container_asset_id)
@@ -385,9 +383,9 @@ class AssetService:
     def is_hidden_undo_version(record: ContainerVersionRecord) -> bool:
         """Return ``True`` when *record* is an internal undo snapshot."""
 
-        return bool(
-            record.notes and record.notes.strip() == UNDO_VERSION_NOTE
-        ) or record.name.startswith(UNDO_VERSION_NAME_PREFIX)
+        return bool(record.notes and record.notes.strip() == UNDO_VERSION_NOTE) or record.name.startswith(
+            UNDO_VERSION_NAME_PREFIX
+        )
 
     # ------------------------------------------------------------------
     # Customization operations

@@ -158,4 +158,3 @@ def test_record_deletion_uses_version_system(tmp_path):
     assert restored_container is not None
     assert restored_container.metadata.get("notes") == "snapshot"
     assert service.list_all_container_versions(container_asset.id)  # hidden version retained
-

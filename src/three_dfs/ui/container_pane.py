@@ -857,10 +857,7 @@ class ContainerPane(QWidget):
                 f" The original file lives in {source_container} and will be preserved."
             )
         else:
-            prompt = (
-                f"Permanently delete '{path.name}'?"
-                " You can undo this from File > Undo."
-            )
+            prompt = f"Permanently delete '{path.name}'?" " You can undo this from File > Undo."
         answer = QMessageBox.question(
             self,
             dialog_title,

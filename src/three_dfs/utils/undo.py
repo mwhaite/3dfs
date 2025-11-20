@@ -107,9 +107,7 @@ class ActionHistory:
             "container_metadata": container_metadata,
             "asset_snapshot": asset_snapshot,
             "container_version_id": container_version_id,
-            "file_contents": base64.b64encode(file_bytes).decode("ascii")
-            if file_bytes is not None
-            else None,
+            "file_contents": base64.b64encode(file_bytes).decode("ascii") if file_bytes is not None else None,
         }
         description = f"Removed {original_path.name}"
         self.record_action(UndoAction(kind="delete_entry", payload=payload, description=description))
@@ -207,9 +205,7 @@ class ActionHistory:
         except Exception:
             return
 
-        hidden_versions = [
-            record for record in versions if asset_service.is_hidden_undo_version(record)
-        ]
+        hidden_versions = [record for record in versions if asset_service.is_hidden_undo_version(record)]
         excess = len(hidden_versions) - self._max_entries
         if excess <= 0:
             return
@@ -381,4 +377,3 @@ class ActionHistory:
             "redo": [asdict(action) for action in self._redo_stack],
         }
         self._history_path.write_text(json.dumps(payload, indent=2))
-
