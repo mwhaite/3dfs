@@ -54,7 +54,13 @@ Use this checklist alongside the automated test suite when validating releases. 
 
 ## G-code preview rendering
 
-1. Select a G-code asset and verify the **Thumbnail** tab displays a rendered toolpath preview alongside the **Text** tab contents.
-2. Add hint tags such as `GCodeHint:tool=EndMill`, `GCodeHint:workpiece=120x80`, or `GCodeHint:cut_color=#00ff88` and request a refresh; confirm the preview updates with the new annotations and colours.
-3. Remove the hint tags and ensure the preview reverts to the default colour scheme on the next refresh.
+1. Select a G-code asset and verify the **Thumbnail**, **Toolpath**, and **Text** tabs are enabled. Interact with the toolpath preview (orbit/pan/zoom) to confirm the 3D reconstruction renders without errors.
+2. Add hint tags such as `GCodeHint:tool=EndMill`, `GCodeHint:workpiece=120x80`, or `GCodeHint:cut_color=#00ff88` and request a refresh; confirm both the thumbnail and toolpath previews update with the new annotations and colours.
+3. Remove the hint tags and ensure the previews revert to the default colour scheme on the next refresh.
 4. Trigger **Capture View** on a different asset, return to the G-code file, and confirm the cached preview remains available without re-rendering delays.
+
+## PDF preview rendering
+
+1. Select a managed PDF file that contains at least one page.
+2. Confirm the **Thumbnail** tab shows a rasterised first-page preview and that the metadata lists the PDF type, page count, and page dimensions.
+3. Remove or disable the QtPdf plug-in (or launch a build without it) and reopen the same PDF to verify the preview pane reports that PDF rendering is unavailable instead of crashing.
