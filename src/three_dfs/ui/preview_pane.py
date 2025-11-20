@@ -103,7 +103,6 @@ _TEXT_PREVIEW_EXTENSIONS: frozenset[str] = frozenset(
         ".csv",
         ".ini",
         ".json",
-        ".gcode",
         ".log",
         ".md",
         ".markdown",
@@ -114,6 +113,7 @@ _TEXT_PREVIEW_EXTENSIONS: frozenset[str] = frozenset(
         ".yaml",
         ".yml",
     }
+    | set(GCODE_EXTENSIONS)
 )
 
 DEFAULT_TEXT_PREVIEW_MAX_BYTES = 200_000
@@ -268,6 +268,7 @@ class PreviewPane(QWidget):
         self._text_unavailable_message: str | None = None
         self._viewer_mesh: _MeshData | None = None
         self._viewer_path: Path | None = None
+        self._viewer_is_gcode = False
         self._viewer_task_counter = 0
         self._viewer_current_task: int | None = None
         self._viewer_workers: dict[int, ViewerLoader] = {}
@@ -530,6 +531,7 @@ class PreviewPane(QWidget):
         self._viewer_error_message = None
         self._text_unavailable_message = None
         self._viewer.clear()
+        self._viewer_is_gcode = False
         self._hide_tab(self._viewer_tab_index, reset_title="3D Viewer")
         self._hide_tab(self._text_tab_index, reset_title="Text")
         self._text_view.clear()
@@ -675,6 +677,7 @@ class PreviewPane(QWidget):
         self._text_unavailable_message = None
         self._viewer_mesh = None
         self._viewer_path = None
+        self._viewer_is_gcode = False
         self._viewer_current_task = None
         self._viewer_workers.clear()
         self._customizer_context = None
@@ -689,15 +692,24 @@ class PreviewPane(QWidget):
         self._hide_tab(self._text_tab_index, reset_title="Text")
 
         # Prepare viewer tab
-        if suffix in _MODEL_EXTENSIONS and path_obj is not None:
+        viewer_ready = path_obj is not None and (suffix in _MODEL_EXTENSIONS or suffix in GCODE_EXTENSIONS)
+        self._viewer_is_gcode = bool(path_obj is not None and suffix in GCODE_EXTENSIONS)
+        if viewer_ready and path_obj is not None:
             self._viewer_path = path_obj
+            viewer_title = "Toolpath" if self._viewer_is_gcode else "3D Viewer"
+            tooltip = (
+                "Interactive toolpath preview reconstructed from G-code commands."
+                if self._viewer_is_gcode
+                else "Interactive 3D viewer for supported meshes."
+            )
             self._show_tab(
                 self._viewer_tab_index,
-                title="3D Viewer",
-                tooltip="Interactive 3D viewer for supported meshes.",
+                title=viewer_title,
+                tooltip=tooltip,
             )
         else:
             self._viewer_path = None
+            self._viewer_is_gcode = False
             message = "3D viewer is only available for supported model formats."
             self._viewer_error_message = message
             self._tabs.setCurrentIndex(0)
@@ -1383,7 +1395,8 @@ class PreviewPane(QWidget):
         self._configure_text_preview(outcome)
         metadata_entries = list(outcome.metadata)
         if self._viewer_error_message:
-            metadata_entries.append(("3D Viewer", self._viewer_error_message))
+            viewer_label = "Toolpath Preview" if self._viewer_is_gcode else "3D Viewer"
+            metadata_entries.append((viewer_label, self._viewer_error_message))
         if outcome.text_content is None and self._text_unavailable_message:
             metadata_entries.append(("Text Preview", self._text_unavailable_message))
         self._last_metadata_entries = list(metadata_entries)

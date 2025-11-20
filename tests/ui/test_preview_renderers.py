@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 
+from three_dfs.ui import model_viewer
 from three_dfs.ui.preview_pane import (
     PreviewOutcome,
     PreviewPane,
@@ -69,3 +71,62 @@ def test_build123d_script_detected(qapp, tmp_path):
     assert preview._tabs.isTabEnabled(preview._text_tab_index)
 
     preview.deleteLater()
+
+
+def test_load_mesh_data_supports_three_mf(monkeypatch, tmp_path):
+    mesh_path = tmp_path / "fixture.3mf"
+    mesh_path.write_text("placeholder", encoding="utf-8")
+
+    vertices = np.array(
+        [
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+        ],
+        dtype=np.float32,
+    )
+    faces = np.array([[0, 1, 2]], dtype=np.int32)
+
+    monkeypatch.setattr(model_viewer, "trimesh", object())
+
+    called: dict[str, Path] = {}
+
+    def fake_loader(path: Path) -> tuple[np.ndarray, np.ndarray]:
+        called["path"] = path
+        return vertices, faces
+
+    monkeypatch.setattr(model_viewer, "_load_with_trimesh_mesh", fake_loader)
+
+    mesh, error = model_viewer.load_mesh_data(mesh_path)
+
+    assert called["path"] == mesh_path
+    assert error is None
+    assert mesh is not None
+    np.testing.assert_allclose(mesh.vertices, vertices)
+    assert mesh.indices.dtype == np.uint32
+    assert mesh.indices.tolist() == [0, 1, 2]
+
+
+def test_load_mesh_data_supports_gcode():
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "sample_toolpath.gcode"
+
+    mesh, error = model_viewer.load_mesh_data(fixture_path)
+
+    assert error is None
+    assert mesh is not None
+    assert mesh.vertices.ndim == 2 and mesh.vertices.shape[1] == 3
+    assert mesh.indices.ndim == 1
+    assert mesh.indices.size > 0
+
+
+def test_nc_gcode_shows_text_preview(qapp, tmp_path):
+    file_path = tmp_path / "program.nc"
+    file_path.write_text("G1 X0 Y0 F1200\n", encoding="utf-8")
+
+    preview = PreviewPane(base_path=tmp_path)
+    outcome = _apply_outcome_sync(preview, file_path)
+
+    qapp.processEvents()
+
+    assert outcome.text_role == "text"
+    assert preview._tabs.isTabEnabled(preview._text_tab_index)
