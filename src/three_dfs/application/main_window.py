@@ -42,6 +42,8 @@ from .settings import (
     save_app_settings,
 )
 from .ui_manager import UIManager
+from .undo_manager import UndoManager
+
 
 WINDOW_TITLE = "3dfs"
 
@@ -70,6 +72,7 @@ class MainWindow(QMainWindow):
         self._bootstrap_demo_data = self._env_bootstrap_demo or self._settings.bootstrap_demo_data
         self._auto_refresh_containers = self._settings.auto_refresh_containers
 
+        self._undo_manager = UndoManager(self)
         self._container_manager = ContainerManager(self)
         self._library_manager = LibraryManager(self)
         self._ui_manager = UIManager(self)
@@ -246,6 +249,27 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _build_menu(self, *args, **kwargs):
         self._menu_manager.build_menu(*args, **kwargs)
+
+        edit_menu = self.menuBar().addMenu("&Edit")
+        undo_action = QAction("Undo", self)
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.triggered.connect(self._undo_manager.undo)
+        edit_menu.addAction(undo_action)
+        self._undo_action = undo_action
+
+        redo_action = QAction("Redo", self)
+        redo_action.setShortcut("Ctrl+Shift+Z")
+        redo_action.triggered.connect(self._undo_manager.redo)
+        edit_menu.addAction(redo_action)
+        self._redo_action = redo_action
+
+        self._undo_manager.stackChanged.connect(self._update_undo_redo_actions)
+        self._update_undo_redo_actions()
+
+    def _update_undo_redo_actions(self):
+        self._undo_action.setEnabled(self._undo_manager.can_undo())
+        self._redo_action.setEnabled(self._undo_manager.can_redo())
+
 
     def _open_settings_dialog(self) -> None:
         dialog = SettingsDialog(self._settings, self)

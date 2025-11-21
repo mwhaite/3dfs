@@ -354,6 +354,21 @@ class ContainerManager:
             self._main_window.statusBar().showMessage("No files were uploaded.", 3000)
             return
 
+        original_metadata = dict(asset.metadata or {})
+
+        def _undo():
+            self._main_window._asset_service.update_asset(asset.id, metadata=original_metadata)
+            self._main_window._show_container(asset)
+
+        def _redo():
+            meta = dict(asset.metadata or {})
+            existing = list(meta.get("attachments") or [])
+            meta["attachments"] = existing + added_attachments
+            refreshed = self._main_window._asset_service.update_asset(asset.id, metadata=meta)
+            self._main_window._show_container(refreshed)
+
+        self._main_window._undo_manager.add(_undo, _redo)
+
         refreshed = asset
         if added_attachments:
             meta = dict(asset.metadata or {})
@@ -416,6 +431,29 @@ class ContainerManager:
                 4000,
             )
             return
+
+        original_metadata = dict(asset.metadata or {})
+
+        def _undo():
+            self._main_window._asset_service.update_asset(asset.id, metadata=original_metadata)
+            self._main_window._current_asset = self._main_window._asset_service.get_asset(asset.id)
+            self.create_or_update_container(
+                focus_component=str(candidate),
+            )
+
+        def _redo():
+            meta = dict(asset.metadata or {})
+            raw_map = meta.get("primary_components")
+            primary_map = dict(raw_map) if isinstance(raw_map, dict) else {}
+            primary_map[rel_path] = rel_path
+            meta["primary_components"] = primary_map
+            updated = self._main_window._asset_service.update_asset(asset.id, metadata=meta)
+            self._main_window._current_asset = updated
+            self.create_or_update_container(
+                focus_component=str(candidate),
+            )
+
+        self._main_window._undo_manager.add(_undo, _redo)
 
         meta = dict(asset.metadata or {})
         raw_map = meta.get("primary_components")
@@ -706,6 +744,41 @@ class ContainerManager:
             if selected_entry is not None:
                 selected_version = selected_entry[1]
 
+        original_source_metadata = dict(container_asset.metadata or {})
+        original_target_metadata = dict(target_asset.metadata or {})
+
+        def _undo():
+            self._main_window._asset_service.update_asset(container_asset.id, metadata=original_source_metadata)
+            self._main_window._asset_service.update_asset(target_asset.id, metadata=original_target_metadata)
+            self._main_window._current_asset = self._main_window._asset_service.get_asset(container_asset.id)
+            self.create_or_update_container(
+                None,
+                show_container=True,
+                select_in_repo=True,
+            )
+
+        def _redo():
+            updated_source, updated_target = container_service.link_containers(
+                container_asset,
+                target_asset,
+                link_type="link",
+                target_version_id=selected_version.id if selected_version else None,
+            )
+            if updated_source is not None:
+                self._main_window._current_asset = updated_source
+
+            self.create_or_update_container(
+                None,
+                show_container=True,
+                select_in_repo=True,
+                focus_component=str(target_folder),
+                display_name=(
+                    updated_source.metadata.get("display_name") if isinstance(updated_source.metadata, dict) else None
+                ),
+            )
+
+        self._main_window._undo_manager.add(_undo, _redo)
+
         container_service = ContainerService(self._main_window._asset_service)
         try:
             updated_source, updated_target = container_service.link_containers(
@@ -885,6 +958,34 @@ class ContainerManager:
             if isinstance(raw_label, str) and raw_label.strip():
                 source_label = raw_label.strip()
             source_container_ref = link_meta.get("source_container_id")
+
+        original_metadata = dict(container_asset.metadata or {})
+
+        def _undo():
+            self._main_window._asset_service.update_asset(container_asset.id, metadata=original_metadata)
+            self._main_window._current_asset = self._main_window._asset_service.get_asset(container_asset.id)
+            self._main_window._show_container(self._main_window._current_asset)
+
+        def _redo():
+            container_metadata = dict(container_asset.metadata) if isinstance(container_asset.metadata, Mapping) else {}
+            component_list = list(container_metadata.get("components") or [])
+            component_list.append(linked_entry)
+            container_metadata["components"] = component_list
+            updated_asset = self._main_window._asset_service.update_asset(
+                container_asset.id,
+                metadata=container_metadata,
+            )
+            if updated_asset is not None:
+                self._main_window._current_asset = updated_asset
+            self._main_window._show_container(self._main_window._current_asset)
+            focus_target = linked_entry.get("path")
+            if isinstance(focus_target, str) and focus_target:
+                try:
+                    self._main_window._container_pane.focus_matching_item([focus_target])
+                except Exception:
+                    pass
+
+        self._main_window._undo_manager.add(_undo, _redo)
 
         container_metadata = dict(container_asset.metadata) if isinstance(container_asset.metadata, Mapping) else {}
         component_list = list(container_metadata.get("components") or [])
