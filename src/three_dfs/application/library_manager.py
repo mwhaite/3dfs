@@ -40,6 +40,27 @@ class LibraryManager:
         identifier = getattr(asset, "id", None)
         return f"Container {identifier}" if identifier is not None else "Container"
 
+    def toggle_star(self, asset_id: int) -> None:
+        """Toggle the 'starred' status of a container."""
+        asset = self._main_window._asset_service.get_asset(asset_id)
+        if not asset:
+            return
+
+        tags = set(asset.tags or [])
+        if "starred" in tags:
+            tags.remove("starred")
+        else:
+            tags.add("starred")
+        self._main_window._asset_service.set_tags_for_asset(asset.id, list(tags))
+
+        for i in range(self._main_window._repository_list.count()):
+            item = self._main_window._repository_list.item(i)
+            if item.data(Qt.UserRole) == asset_id:
+                item.setData(Qt.UserRole + 2, list(tags))
+                self._main_window._repository_list.update(self._main_window._repository_list.indexFromItem(item))
+                self._main_window._tag_panel.set_active_item(asset_id)
+                break
+
     def populate_repository(self) -> None:
         """Populate the repository view with persisted asset entries."""
 
@@ -109,8 +130,7 @@ class LibraryManager:
             item.setData(Qt.UserRole, asset.id)
             item.setData(Qt.UserRole + 1, asset.path)
             item.setToolTip(asset.path)
-            container_type = metadata.get("container_type")
-            item.setData(Qt.UserRole + 2, container_type)
+            item.setData(Qt.UserRole + 2, asset.tags)
             self._main_window._repository_list.addItem(item)
             valid_assets += 1
 

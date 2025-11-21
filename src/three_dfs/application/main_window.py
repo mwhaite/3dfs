@@ -26,6 +26,8 @@ from ..ui.preview_pane import PreviewPane
 from ..ui.settings_dialog import SettingsDialog
 from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
+from ..ui.widgets import RepositoryListWidget
+from ..ui.delegates import StarDelegate
 from .asset_manager import AssetManager
 from .container_manager import ContainerManager
 from .container_scanner import (
@@ -81,9 +83,10 @@ class MainWindow(QMainWindow):
 
         self._asset_service = AssetService()
         self._library_search = LibrarySearch(service=self._asset_service)
-        self._repository_list = QListWidget(self)
+        self._repository_list = RepositoryListWidget(self, self)
         self._repository_list.setObjectName("repositoryList")
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._repository_list.setItemDelegate(StarDelegate(self._repository_list))
         self._toggle_repo_action: QAction | None = None
         self._tag_panel_action: QAction | None = None
         # Right-click context menu on repository list
