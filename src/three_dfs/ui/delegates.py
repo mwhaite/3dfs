@@ -16,16 +16,11 @@ class StarDelegate(QStyledItemDelegate):
         super().paint(painter, option, index)
 
         # Get the data
-        text = index.data(Qt.DisplayRole)
         tags = index.data(Qt.UserRole + 2) # Using UserRole+2 for the tag list
 
         # Define rectangles
         rect = option.rect
-        text_rect = QRect(rect.left() + 5, rect.top(), rect.width() - 35, rect.height())
         star_rect = QRect(rect.right() - 30, rect.top(), 30, rect.height())
-
-        # Draw Text
-        painter.drawText(text_rect, Qt.AlignVCenter, text)
 
         # Draw Star
         star_char = "★" if "starred" in (tags or []) else "☆"
