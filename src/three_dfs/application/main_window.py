@@ -399,7 +399,7 @@ class MainWindow(QMainWindow):
         self._ui_manager.show_container(*args, **kwargs)
 
     def _apply_library_filters(self, *args, **kwargs):
-        self._library_manager.apply_library_filters(*args, **kwargs)
+        self._library_manager.apply_library_filters()
 
     def _run_library_search(self, *args, **kwargs):
         return self._library_manager.run_library_search(*args, **kwargs)
