@@ -23,8 +23,8 @@ class ImporterManager:
         """Get an importer by name."""
         return self._importers.get(name)
 
-    def import_container(self, name: str, url: str) -> None:
+    def import_container(self, name: str, url: str, settings: "AppSettings") -> None:
         """Import a container from a given URL."""
         importer = self.get_importer(name)
         if importer:
-            return importer.import_container(url)
+            return importer.import_container(url, settings)

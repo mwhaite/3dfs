@@ -66,11 +66,13 @@ class SettingsDialog(QDialog):
         interface_tab = self._build_interface_tab(settings)
         containers_tab = self._build_containers_tab(settings)
         appearance_tab = self._build_appearance_tab(settings)
+        importers_tab = self._build_importers_tab(settings)
 
         self._tabs.addTab(general_tab, "General")
         self._tabs.addTab(interface_tab, "Interface")
         self._tabs.addTab(containers_tab, "Containers")
         self._tabs.addTab(appearance_tab, "Appearance")
+        self._tabs.addTab(importers_tab, "Importers")
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -234,6 +236,28 @@ class SettingsDialog(QDialog):
         self._refresh_color_buttons()
         return container
 
+    def _build_importers_tab(self, settings: AppSettings) -> QWidget:
+        container = QWidget(self)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        importers_box = QGroupBox("API Keys")
+        importers_layout = QFormLayout(importers_box)
+        importers_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+
+        self._thingiverse_token_input = QLineEdit(settings.thingiverse_token)
+        self._thingiverse_token_input.setPlaceholderText("Enter your Thingiverse API token")
+        importers_layout.addRow("Thingiverse token", self._thingiverse_token_input)
+
+        self._myminifactory_token_input = QLineEdit(settings.myminifactory_token)
+        self._myminifactory_token_input.setPlaceholderText("Enter your MyMiniFactory API token")
+        importers_layout.addRow("MyMiniFactory token", self._myminifactory_token_input)
+
+        layout.addWidget(importers_box)
+        layout.addStretch(1)
+        return container
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -314,6 +338,8 @@ class SettingsDialog(QDialog):
             theme_name=self._theme_combo.currentText() if self._theme_combo is not None else DEFAULT_THEME_NAME,
             theme_colors=self._theme_colors.copy(),
             custom_themes={name: palette.copy() for name, palette in self._custom_themes.items()},
+            thingiverse_token=self._thingiverse_token_input.text(),
+            myminifactory_token=self._myminifactory_token_input.text(),
         )
 
         self._result = updated

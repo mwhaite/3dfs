@@ -57,6 +57,8 @@ class AppSettings:
     theme_name: str = DEFAULT_THEME_NAME
     theme_colors: ThemeColors = field(default_factory=lambda: DEFAULT_THEME_COLORS.copy())
     custom_themes: dict[str, ThemeColors] = field(default_factory=dict)
+    thingiverse_token: str = ""
+    myminifactory_token: str = ""
 
     def resolved_theme_colors(self) -> ThemeColors:
         """Return the theme colors that should be applied to the UI."""
@@ -166,6 +168,12 @@ def load_app_settings(*, fallback_root: Path) -> AppSettings:
     base_theme = custom_themes.get(theme_name, DEFAULT_THEME_COLORS)
     theme_colors = _coerce_color_map(theme_colors, base_theme)
 
+    thingiverse_token_raw = store.value("importers/thingiverseToken")
+    thingiverse_token = thingiverse_token_raw.strip() if isinstance(thingiverse_token_raw, str) else ""
+
+    myminifactory_token_raw = store.value("importers/myminifactoryToken")
+    myminifactory_token = myminifactory_token_raw.strip() if isinstance(myminifactory_token_raw, str) else ""
+
     return AppSettings(
         library_root=library_root,
         show_repository_sidebar=show_repo,
@@ -175,6 +183,8 @@ def load_app_settings(*, fallback_root: Path) -> AppSettings:
         theme_name=theme_name,
         theme_colors=theme_colors,
         custom_themes=custom_themes,
+        thingiverse_token=thingiverse_token,
+        myminifactory_token=myminifactory_token,
     )
 
 
@@ -204,6 +214,11 @@ def save_app_settings(settings: AppSettings) -> None:
     store.setValue("themeName", settings.theme_name)
     store.setValue("themeColors", json.dumps(settings.theme_colors))
     store.setValue("customThemes", json.dumps(settings.custom_themes))
+    store.endGroup()
+
+    store.beginGroup("importers")
+    store.setValue("thingiverseToken", settings.thingiverse_token)
+    store.setValue("myminifactoryToken", settings.myminifactory_token)
     store.endGroup()
 
     store.sync()

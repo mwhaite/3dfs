@@ -13,11 +13,11 @@ from .base import Importer
 class MyMiniFactoryImporter(Importer):
     """Importer for MyMiniFactory."""
 
-    def import_container(self, url: str) -> Path:
+    def import_container(self, url: str, settings: "AppSettings") -> Path:
         """Import a container from a given URL."""
-        access_token = os.environ.get("MYMINIFACTORY_TOKEN")
+        access_token = settings.myminifactory_token
         if not access_token:
-            raise ValueError("MYMINIFACTORY_TOKEN environment variable not set. Please obtain a token from the MyMiniFactory Developer Console.")
+            raise ValueError("MYMINIFACTORY_TOKEN not set in settings. Please obtain a token from the MyMiniFactory Developer Console and set it in the settings.")
 
         match = re.search(r"object/([\w-]+)-(\d+)", url)
         if not match:

@@ -28,6 +28,8 @@ from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
 from ..ui.widgets import RepositoryListWidget
 from ..ui.delegates import StarDelegate
+from ..importers import ImporterManager
+from PySide6.QtWidgets import QInputDialog, QMessageBox
 from .asset_manager import AssetManager
 from .container_manager import ContainerManager
 from .container_scanner import (
@@ -80,6 +82,7 @@ class MainWindow(QMainWindow):
         self._ui_manager = UIManager(self)
         self._menu_manager = MenuManager(self)
         self._asset_manager = AssetManager(self)
+        self._importer_manager = ImporterManager()
 
         self._asset_service = AssetService()
         self._library_search = LibrarySearch(service=self._asset_service)
@@ -413,6 +416,25 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Container helpers
     # ------------------------------------------------------------------
+    def _import_from_url(self):
+        """Import a container from a URL."""
+        importers = self._importer_manager._importers.keys()
+        importer_name, ok = QInputDialog.getItem(self, "Import from URL", "Select Importer:", list(importers), 0, False)
+        if ok and importer_name:
+            url, ok = QInputDialog.getText(self, "Import from URL", "URL:")
+            if ok and url:
+                try:
+                    container_path = self._importer_manager.import_container(importer_name, url, self._settings)
+                    self._container_manager.create_or_update_container(
+                        container_path,
+                        select_in_repo=True,
+                        show_container=True,
+                    )
+                except NotImplementedError:
+                    QMessageBox.warning(self, "Not Implemented", "This importer is not yet implemented.")
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"An error occurred: {e}")
+
     def _create_or_update_container(self, *args, **kwargs):
         self._container_manager.create_or_update_container(*args, **kwargs)
 
