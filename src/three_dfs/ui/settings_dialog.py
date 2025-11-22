@@ -98,6 +98,7 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         library_box = QGroupBox("Library")
+        library_box.setContentsMargins(10, 10, 10, 10)
         library_layout = QFormLayout(library_box)
         library_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
@@ -132,6 +133,7 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         interface_box = QGroupBox("Layout")
+        interface_box.setContentsMargins(10, 10, 10, 10)
         interface_layout = QVBoxLayout(interface_box)
 
         self._sidebar_checkbox = QCheckBox("Show repository sidebar on startup", interface_box)
@@ -156,6 +158,7 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         containers_box = QGroupBox("Automation")
+        containers_box.setContentsMargins(10, 10, 10, 10)
         containers_layout = QVBoxLayout(containers_box)
 
         self._auto_refresh_checkbox = QCheckBox(
@@ -166,6 +169,7 @@ class SettingsDialog(QDialog):
         containers_layout.addWidget(self._auto_refresh_checkbox)
 
         preview_box = QGroupBox("Preview")
+        preview_box.setContentsMargins(10, 10, 10, 10)
         preview_layout = QFormLayout(preview_box)
         preview_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
@@ -188,6 +192,7 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         theme_box = QGroupBox("Theme", container)
+        theme_box.setContentsMargins(10, 10, 10, 10)
         theme_layout = QFormLayout(theme_box)
         theme_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
@@ -213,6 +218,7 @@ class SettingsDialog(QDialog):
         theme_layout.addRow("Save as", save_row)
 
         colors_box = QGroupBox("Colors", container)
+        colors_box.setContentsMargins(10, 10, 10, 10)
         colors_layout = QFormLayout(colors_box)
         colors_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
@@ -243,6 +249,7 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         importers_box = QGroupBox("API Keys")
+        importers_box.setContentsMargins(10, 10, 10, 10)
         importers_layout = QFormLayout(importers_box)
         importers_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
