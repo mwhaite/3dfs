@@ -98,9 +98,10 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         library_box = QGroupBox("Library")
-        library_box.setContentsMargins(10, 10, 10, 10)
+        library_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         library_layout = QFormLayout(library_box)
         library_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        library_layout.setSpacing(10)  # Add spacing between form rows
 
         library_path_row = QWidget(library_box)
         library_path_layout = QHBoxLayout(library_path_row)
@@ -112,15 +113,25 @@ class SettingsDialog(QDialog):
         library_path_layout.addWidget(browse_btn)
         library_layout.addRow("Library root", library_path_row)
 
+        # Create a vertical layout for the demo checkbox and its description
+        demo_widget = QWidget(library_box)
+        demo_layout = QVBoxLayout(demo_widget)
+        demo_layout.setContentsMargins(0, 0, 0, 0)
+        demo_layout.setSpacing(6)
+
         self._demo_checkbox = QCheckBox("Seed example entries when the library is empty", library_box)
         self._demo_checkbox.setChecked(settings.bootstrap_demo_data)
+        demo_layout.addWidget(self._demo_checkbox)
+
         info_label = QLabel(
             "When enabled the application adds a curated set of sample assets " "to help explore features."
         )
         info_label.setWordWrap(True)
         info_label.setObjectName("demoInfoLabel")
-        library_layout.addRow(self._demo_checkbox)
-        library_layout.addRow(info_label)
+        demo_layout.addWidget(info_label)
+
+        # Add the vertical layout as a single row in the form layout
+        library_layout.addRow(demo_widget)
 
         layout.addWidget(library_box)
         layout.addStretch(1)
@@ -133,8 +144,9 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         interface_box = QGroupBox("Layout")
-        interface_box.setContentsMargins(10, 10, 10, 10)
+        interface_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         interface_layout = QVBoxLayout(interface_box)
+        interface_layout.setSpacing(10)  # Add spacing between layout items
 
         self._sidebar_checkbox = QCheckBox("Show repository sidebar on startup", interface_box)
         self._sidebar_checkbox.setChecked(settings.show_repository_sidebar)
@@ -158,8 +170,9 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         containers_box = QGroupBox("Automation")
-        containers_box.setContentsMargins(10, 10, 10, 10)
+        containers_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         containers_layout = QVBoxLayout(containers_box)
+        containers_layout.setSpacing(10)  # Add spacing between layout items
 
         self._auto_refresh_checkbox = QCheckBox(
             "Automatically refresh open containers when files change",
@@ -169,9 +182,10 @@ class SettingsDialog(QDialog):
         containers_layout.addWidget(self._auto_refresh_checkbox)
 
         preview_box = QGroupBox("Preview")
-        preview_box.setContentsMargins(10, 10, 10, 10)
+        preview_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         preview_layout = QFormLayout(preview_box)
         preview_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        preview_layout.setSpacing(10)  # Add spacing between form rows
 
         self._preview_limit_spin = QSpinBox(preview_box)
         self._preview_limit_spin.setRange(10, 4096)
@@ -192,9 +206,10 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         theme_box = QGroupBox("Theme", container)
-        theme_box.setContentsMargins(10, 10, 10, 10)
+        theme_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         theme_layout = QFormLayout(theme_box)
         theme_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        theme_layout.setSpacing(10)  # Add spacing between form rows
 
         self._theme_combo = QComboBox(theme_box)
         self._theme_combo.addItem(DEFAULT_THEME_NAME)
@@ -218,9 +233,10 @@ class SettingsDialog(QDialog):
         theme_layout.addRow("Save as", save_row)
 
         colors_box = QGroupBox("Colors", container)
-        colors_box.setContentsMargins(10, 10, 10, 10)
+        colors_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         colors_layout = QFormLayout(colors_box)
         colors_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        colors_layout.setSpacing(10)  # Add spacing between form rows
 
         color_roles = (
             ("window", "Window background"),
@@ -249,9 +265,10 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         importers_box = QGroupBox("API Keys")
-        importers_box.setContentsMargins(10, 10, 10, 10)
+        importers_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         importers_layout = QFormLayout(importers_box)
         importers_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        importers_layout.setSpacing(10)  # Add spacing between form rows
 
         self._thingiverse_token_input = QLineEdit(settings.thingiverse_token)
         self._thingiverse_token_input.setPlaceholderText("Enter your Thingiverse API token")
