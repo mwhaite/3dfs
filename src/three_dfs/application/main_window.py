@@ -23,6 +23,7 @@ from ..search import LibrarySearch
 from ..storage import AssetService
 from ..ui.container_pane import ContainerPane
 from ..ui.preview_pane import PreviewPane
+from ..ui.bulk_import_dialog import BulkImportDialog
 from ..ui.settings_dialog import SettingsDialog
 from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
@@ -46,6 +47,7 @@ from .settings import (
     save_app_settings,
 )
 from .ui_manager import UIManager
+from .bulk_import_manager import BulkImportManager
 from .undo_manager import UndoManager
 
 
@@ -83,6 +85,7 @@ class MainWindow(QMainWindow):
         self._menu_manager = MenuManager(self)
         self._asset_manager = AssetManager(self)
         self._importer_manager = ImporterManager()
+        self._bulk_import_manager = BulkImportManager(self)
 
         self._asset_service = AssetService()
         self._library_search = LibrarySearch(service=self._asset_service)
@@ -286,6 +289,14 @@ class MainWindow(QMainWindow):
             return
         self._apply_settings(new_settings)
 
+    def _open_bulk_import_dialog(self) -> None:
+        dialog = BulkImportDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        # Use the already initialized bulk import manager
+        self._bulk_import_manager.perform_bulk_import(dialog)
+
     def _apply_settings(self, new_settings: AppSettings) -> None:
         previous = self._settings
         self._settings = new_settings
@@ -432,6 +443,8 @@ class MainWindow(QMainWindow):
                     )
                 except NotImplementedError:
                     QMessageBox.warning(self, "Not Implemented", "This importer is not yet implemented.")
+                except ValueError as e:
+                    QMessageBox.critical(self, "Error", f"Invalid importer: {e}")
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"An error occurred: {e}")
 

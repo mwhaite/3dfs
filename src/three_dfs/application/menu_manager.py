@@ -46,6 +46,10 @@ class MenuManager:
         settings_action.triggered.connect(self._main_window._open_settings_dialog)
         file_menu.addAction(settings_action)
 
+        bulk_import_action = QAction("Bulk Import…", self._main_window)
+        bulk_import_action.triggered.connect(self._main_window._open_bulk_import_dialog)
+        file_menu.addAction(bulk_import_action)
+
         # Container actions
         container_menu = menubar.addMenu("&Containers")
         from PySide6.QtWidgets import QFileDialog
@@ -72,6 +76,10 @@ class MenuManager:
         add_attachment_action = QAction("Upload File(s) to Current Container…", self._main_window)
         add_attachment_action.triggered.connect(self._main_window._container_manager.add_container_attachments)
         container_menu.addAction(add_attachment_action)
+
+        import_url_action = QAction("Import from URL…", self._main_window)
+        import_url_action.triggered.connect(self._main_window._import_from_url)
+        container_menu.addAction(import_url_action)
 
         sidebar_menu = menubar.addMenu("&View")
         toggle_repo_action = QAction("Toggle Repository Sidebar", self._main_window)
