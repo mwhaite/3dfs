@@ -5,8 +5,11 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Mapping
+from datetime import UTC, datetime
 
 from PySide6.QtCore import QCoreApplication, QFileSystemWatcher, Qt, QThreadPool, QTimer
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -25,6 +28,7 @@ from ..ui.container_pane import ContainerPane
 from ..ui.preview_pane import PreviewPane
 from ..ui.bulk_import_dialog import BulkImportDialog
 from ..ui.settings_dialog import SettingsDialog
+from ..ui.url_dialog import UrlDialog
 from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
 from ..ui.widgets import RepositoryListWidget
@@ -296,6 +300,63 @@ class MainWindow(QMainWindow):
 
         # Use the already initialized bulk import manager
         self._bulk_import_manager.perform_bulk_import(dialog)
+
+    def add_web_link(self) -> None:
+        """Add a web link as a new asset."""
+        dialog = UrlDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            url = dialog.url()
+            label = dialog.label()
+
+            # Validate URL
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            if not parsed.scheme or parsed.scheme not in ('http', 'https'):
+                self.statusBar().showMessage(f"Invalid URL format: {url}", 5000)
+                return
+
+            # Create a unique path for the URL asset
+            import uuid
+            unique_id = str(uuid.uuid4())
+            url_path = f"urls/{unique_id}"
+
+            # Create metadata for the URL asset
+            metadata = {
+                "kind": "url",
+                "url": url,
+                "description": f"Web link to {url}",
+                "created_at": str(datetime.now(UTC).isoformat())
+            }
+
+            # Create the asset record
+            asset = self._asset_service.create_asset(
+                path=url_path,
+                label=label,
+                metadata=metadata
+            )
+
+            # Refresh the repository to show the new asset
+            self._populate_repository()
+            self.statusBar().showMessage(f"Added web link: {label}", 5000)
+
+    def open_url_in_browser(self, url: str) -> None:
+        """Open the given URL in the user's default web browser."""
+        # Validate URL format
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if not parsed.scheme or parsed.scheme not in ('http', 'https'):
+            # Add default scheme if not provided
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            parsed = urlparse(url)
+
+        if parsed.scheme in ('http', 'https'):
+            QDesktopServices.openUrl(QUrl(url))
+            self.statusBar().showMessage(f"Opening {url} in web browser...", 3000)
+        else:
+            self.statusBar().showMessage(f"Invalid URL format: {url}", 3000)
 
     def _apply_settings(self, new_settings: AppSettings) -> None:
         previous = self._settings

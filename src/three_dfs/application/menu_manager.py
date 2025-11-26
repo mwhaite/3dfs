@@ -50,6 +50,10 @@ class MenuManager:
         bulk_import_action.triggered.connect(self._main_window._open_bulk_import_dialog)
         file_menu.addAction(bulk_import_action)
 
+        add_url_action = QAction("Add Web Link…", self._main_window)
+        add_url_action.triggered.connect(self._main_window.add_web_link)
+        file_menu.addAction(add_url_action)
+
         # Container actions
         container_menu = menubar.addMenu("&Containers")
         from PySide6.QtWidgets import QFileDialog
