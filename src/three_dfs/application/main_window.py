@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import configure, get_config
-from ..importers import ImporterManager
+from ..api_importers import ImporterManager
 from ..search import LibrarySearch
 from ..storage import AssetService
 from ..ui.bulk_import_dialog import BulkImportDialog

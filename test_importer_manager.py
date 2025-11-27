@@ -4,19 +4,19 @@
 def test_importer_manager():
     """Test that the ImporterManager can be imported and instantiated without errors."""
     print("Testing ImporterManager instantiation...")
-    
+
     try:
-        from three_dfs.importers import ImporterManager
+        from three_dfs.api_importers import ImporterManager
         print("✓ Successfully imported ImporterManager")
-        
+
         # Try to instantiate
         manager = ImporterManager()
         print("✓ Successfully instantiated ImporterManager")
-        
+
         # Check that importers are registered
         available_importers = list(manager._importers.keys())
         print(f"✓ Available importers: {available_importers}")
-        
+
         # Test that we can get each importer
         for importer_name in available_importers:
             importer = manager.get_importer(importer_name)
@@ -24,10 +24,10 @@ def test_importer_manager():
                 print(f"✓ Successfully got {importer_name} importer")
             else:
                 print(f"✗ Failed to get {importer_name} importer")
-        
+
         print("\nAll tests passed! ImporterManager is working correctly.")
         return True
-        
+
     except ImportError as e:
         print(f"✗ Import error: {e}")
         return False
