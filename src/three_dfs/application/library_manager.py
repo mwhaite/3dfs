@@ -40,6 +40,27 @@ class LibraryManager:
         identifier = getattr(asset, "id", None)
         return f"Container {identifier}" if identifier is not None else "Container"
 
+    def toggle_star(self, asset_id: int) -> None:
+        """Toggle the 'starred' status of a container."""
+        asset = self._main_window._asset_service.get_asset(asset_id)
+        if not asset:
+            return
+
+        tags = set(asset.tags or [])
+        if "starred" in tags:
+            tags.remove("starred")
+        else:
+            tags.add("starred")
+        self._main_window._asset_service.set_tags_for_asset(asset.id, list(tags))
+
+        for i in range(self._main_window._repository_list.count()):
+            item = self._main_window._repository_list.item(i)
+            if item.data(Qt.UserRole) == asset_id:
+                item.setData(Qt.UserRole + 2, list(tags))
+                self._main_window._repository_list.update(self._main_window._repository_list.indexFromItem(item))
+                self._main_window._tag_panel.set_active_item(asset_id)
+                break
+
     def populate_repository(self) -> None:
         """Populate the repository view with persisted asset entries."""
 
@@ -109,8 +130,7 @@ class LibraryManager:
             item.setData(Qt.UserRole, asset.id)
             item.setData(Qt.UserRole + 1, asset.path)
             item.setToolTip(asset.path)
-            container_type = metadata.get("container_type")
-            item.setData(Qt.UserRole + 2, container_type)
+            item.setData(Qt.UserRole + 2, asset.tags)
             self._main_window._repository_list.addItem(item)
             valid_assets += 1
 
@@ -140,103 +160,96 @@ class LibraryManager:
             self._main_window._repo_search_input.text() if hasattr(self._main_window, "_repo_search_input") else ""
         )
         query = raw_text.strip()
-        override_tag = None
-        if query.startswith("#"):
-            override_tag = query[1:].strip()
-            query = ""
+        override_tags = [term[1:].strip() for term in query.split() if term.startswith("#")]
+        plain_queries = [term for term in query.split() if not term.startswith("#")]
+        query = " ".join(plain_queries)
 
         text_needle = query.casefold()
         search_paths = self.run_library_search(query) if query else None
-        if override_tag is not None:
-            if override_tag != (self._main_window._tag_filter or ""):
-                self._main_window._tag_filter = override_tag or None
-                self._main_window._tag_filter_container_ids.clear()
-                self._main_window._tag_filter_order_ids.clear()
-                self._main_window._tag_filter_container_paths.clear()
-                self._main_window._tag_filter_focus_map.clear()
-                if override_tag:
-                    try:
-                        tagged_paths = sorted(self._main_window._asset_service.paths_for_tag(override_tag))
-                    except Exception:
-                        tagged_paths = []
-                    for raw_path in tagged_paths:
-                        asset = self._main_window._asset_service.get_asset_by_path(raw_path)
-                        container_path = None
-                        if asset is not None and isinstance(asset.metadata, dict):
-                            metadata = asset.metadata
-                            container_candidate = metadata.get("container_path")
-                            if isinstance(container_candidate, str) and container_candidate.strip():
-                                container_path = container_candidate.strip()
-                        if container_path is None:
-                            try:
-                                container_path = str(Path(raw_path).expanduser().resolve().parent)
-                            except Exception:
-                                container_path = None
-                        if not container_path:
-                            continue
-                        container_asset = self._main_window._asset_service.get_asset_by_path(container_path)
-                        if container_asset is None:
-                            continue
-                        try:
-                            container_id = int(container_asset.id)
-                        except Exception:
-                            continue
-                        self._main_window._tag_filter_container_ids.add(container_id)
-                        if container_id not in self._main_window._tag_filter_order_ids:
-                            self._main_window._tag_filter_order_ids.append(container_id)
-                        self._main_window._tag_filter_container_paths[container_id] = container_asset.path
-                        focus_list = self._main_window._tag_filter_focus_map.setdefault(container_id, [])
-                        if raw_path not in focus_list:
-                            focus_list.append(raw_path)
-            active_tag_filter = override_tag
-        else:
-            if self._main_window._tag_filter is not None:
-                self._main_window._tag_filter = None
-                self._main_window._tag_filter_container_ids.clear()
-                self._main_window._tag_filter_order_ids.clear()
-                self._main_window._tag_filter_container_paths.clear()
-                self._main_window._tag_filter_focus_map.clear()
-            active_tag_filter = None
+
         tag_ids: set[int] | None = None
-        if active_tag_filter is not None:
-            tag_ids = set(self._main_window._tag_filter_container_ids)
+        if override_tags:
+            try:
+                tagged_paths_per_tag = [set(self._main_window._asset_service.paths_for_tag(tag)) for tag in override_tags]
+                tagged_paths = set.intersection(*tagged_paths_per_tag) if tagged_paths_per_tag else set()
+            except Exception:
+                tagged_paths = set()
+
+            tag_ids = set()
+            for raw_path in tagged_paths:
+                asset = self._main_window._asset_service.get_asset_by_path(raw_path)
+                container_path = None
+                if asset is not None and isinstance(asset.metadata, dict):
+                    metadata = asset.metadata
+                    container_candidate = metadata.get("container_path")
+                    if isinstance(container_candidate, str) and container_candidate.strip():
+                        container_path = container_candidate.strip()
+                if container_path is None:
+                    try:
+                        container_path = str(Path(raw_path).expanduser().resolve().parent)
+                    except Exception:
+                        container_path = None
+                if not container_path:
+                    continue
+                container_asset = self._main_window._asset_service.get_asset_by_path(container_path)
+                if container_asset is None:
+                    continue
+                try:
+                    container_id = int(container_asset.id)
+                    tag_ids.add(container_id)
+                except Exception:
+                    continue
 
         for row in range(self._main_window._repository_list.count()):
             item = self._main_window._repository_list.item(row)
             raw_path = item.data(Qt.UserRole + 1) or item.text()
             path = str(raw_path) if raw_path is not None else ""
             label = item.text()
-            if search_paths is None:
-                if not text_needle:
-                    visible = True
-                else:
-                    label_case = (label or "").casefold()
-                    visible = text_needle in label_case or text_needle in path.casefold()
-            else:
-                visible = path in search_paths
+            
+            visible = True
+            if search_paths is not None and path not in search_paths:
+                visible = False
 
-            if visible and tag_ids is not None:
+            if text_needle:
+                label_case = (label or "").casefold()
+                if not all(term in label_case or term in path.casefold() for term in text_needle.split()):
+                    visible = False
+
+            if tag_ids is not None:
                 try:
                     candidate_id = int(item.data(Qt.UserRole))
                 except (TypeError, ValueError):
                     candidate_id = None
-                visible = candidate_id is not None and candidate_id in tag_ids
+                if candidate_id not in tag_ids:
+                    visible = False
+            
             item.setHidden(not visible)
 
     def run_library_search(self, query: str) -> set[str] | None:
         """Return asset paths that match *query* using :mod:`three_dfs.search`."""
-
+        if not query:
+            return set()
         try:
-            hits = self._main_window._library_search.search(query)
+            terms = query.split()
+            hits_per_term = [self._main_window._library_search.search(term) for term in terms]
+            
+            if not hits_per_term:
+                return set()
+
+            paths_per_term = []
+            for hits in hits_per_term:
+                paths = set()
+                for hit in hits:
+                    target = hit.container_path or hit.path
+                    if target:
+                        paths.add(target)
+                paths_per_term.append(paths)
+
+            matches = set.intersection(*paths_per_term) if paths_per_term else set()
         except Exception:
             logger.exception("Failed to execute library search", exc_info=True)
             return None
 
-        matches: set[str] = set()
-        for hit in hits:
-            target = hit.container_path or hit.path
-            if target:
-                matches.add(target)
         return matches
 
     def rescan_library(self) -> None:

@@ -6,8 +6,11 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
+    QColorDialog,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -24,7 +27,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..application.settings import AppSettings
+from ..application.settings import (
+    DEFAULT_THEME_COLORS,
+    DEFAULT_THEME_NAME,
+    AppSettings,
+    ThemeColors,
+)
 from ..utils.paths import coerce_required_path
 
 __all__ = ["SettingsDialog"]
@@ -46,13 +54,25 @@ class SettingsDialog(QDialog):
         self._library_input = QLineEdit(str(settings.library_root))
         self._library_input.setPlaceholderText("Choose the root folder for your library")
 
+        self._custom_themes: dict[str, ThemeColors] = {
+            name: palette.copy() for name, palette in settings.custom_themes.items()
+        }
+        self._theme_colors: ThemeColors = settings.resolved_theme_colors().copy()
+        self._theme_combo: QComboBox | None = None
+        self._theme_name_input: QLineEdit | None = None
+        self._color_buttons: dict[str, QPushButton] = {}
+
         general_tab = self._build_general_tab(settings)
         interface_tab = self._build_interface_tab(settings)
         containers_tab = self._build_containers_tab(settings)
+        appearance_tab = self._build_appearance_tab(settings)
+        importers_tab = self._build_importers_tab(settings)
 
         self._tabs.addTab(general_tab, "General")
         self._tabs.addTab(interface_tab, "Interface")
         self._tabs.addTab(containers_tab, "Containers")
+        self._tabs.addTab(appearance_tab, "Appearance")
+        self._tabs.addTab(importers_tab, "Importers")
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -78,8 +98,10 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         library_box = QGroupBox("Library")
+        library_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         library_layout = QFormLayout(library_box)
         library_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        library_layout.setSpacing(10)  # Add spacing between form rows
 
         library_path_row = QWidget(library_box)
         library_path_layout = QHBoxLayout(library_path_row)
@@ -91,15 +113,25 @@ class SettingsDialog(QDialog):
         library_path_layout.addWidget(browse_btn)
         library_layout.addRow("Library root", library_path_row)
 
+        # Create a vertical layout for the demo checkbox and its description
+        demo_widget = QWidget(library_box)
+        demo_layout = QVBoxLayout(demo_widget)
+        demo_layout.setContentsMargins(0, 0, 0, 0)
+        demo_layout.setSpacing(6)
+
         self._demo_checkbox = QCheckBox("Seed example entries when the library is empty", library_box)
         self._demo_checkbox.setChecked(settings.bootstrap_demo_data)
+        demo_layout.addWidget(self._demo_checkbox)
+
         info_label = QLabel(
             "When enabled the application adds a curated set of sample assets " "to help explore features."
         )
         info_label.setWordWrap(True)
         info_label.setObjectName("demoInfoLabel")
-        library_layout.addRow(self._demo_checkbox)
-        library_layout.addRow(info_label)
+        demo_layout.addWidget(info_label)
+
+        # Add the vertical layout as a single row in the form layout
+        library_layout.addRow(demo_widget)
 
         layout.addWidget(library_box)
         layout.addStretch(1)
@@ -112,7 +144,9 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         interface_box = QGroupBox("Layout")
+        interface_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         interface_layout = QVBoxLayout(interface_box)
+        interface_layout.setSpacing(10)  # Add spacing between layout items
 
         self._sidebar_checkbox = QCheckBox("Show repository sidebar on startup", interface_box)
         self._sidebar_checkbox.setChecked(settings.show_repository_sidebar)
@@ -136,7 +170,9 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         containers_box = QGroupBox("Automation")
+        containers_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         containers_layout = QVBoxLayout(containers_box)
+        containers_layout.setSpacing(10)  # Add spacing between layout items
 
         self._auto_refresh_checkbox = QCheckBox(
             "Automatically refresh open containers when files change",
@@ -146,8 +182,10 @@ class SettingsDialog(QDialog):
         containers_layout.addWidget(self._auto_refresh_checkbox)
 
         preview_box = QGroupBox("Preview")
+        preview_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
         preview_layout = QFormLayout(preview_box)
         preview_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        preview_layout.setSpacing(10)  # Add spacing between form rows
 
         self._preview_limit_spin = QSpinBox(preview_box)
         self._preview_limit_spin.setRange(10, 4096)
@@ -158,6 +196,89 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(containers_box)
         layout.addWidget(preview_box)
+        layout.addStretch(1)
+        return container
+
+    def _build_appearance_tab(self, settings: AppSettings) -> QWidget:
+        container = QWidget(self)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        theme_box = QGroupBox("Theme", container)
+        theme_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
+        theme_layout = QFormLayout(theme_box)
+        theme_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        theme_layout.setSpacing(10)  # Add spacing between form rows
+
+        self._theme_combo = QComboBox(theme_box)
+        self._theme_combo.addItem(DEFAULT_THEME_NAME)
+        for name in sorted(self._custom_themes):
+            self._theme_combo.addItem(name)
+        chosen_theme = settings.theme_name if settings.theme_name in self._custom_themes else DEFAULT_THEME_NAME
+        self._theme_combo.setCurrentText(chosen_theme)
+        self._theme_combo.currentTextChanged.connect(self._handle_theme_selected)
+        theme_layout.addRow("Theme", self._theme_combo)
+
+        save_row = QWidget(theme_box)
+        save_row_layout = QHBoxLayout(save_row)
+        save_row_layout.setContentsMargins(0, 0, 0, 0)
+        save_row_layout.setSpacing(6)
+        self._theme_name_input = QLineEdit(save_row)
+        self._theme_name_input.setPlaceholderText("Name for saved colorset")
+        save_button = QPushButton("Save theme", save_row)
+        save_button.clicked.connect(self._save_theme)
+        save_row_layout.addWidget(self._theme_name_input, 1)
+        save_row_layout.addWidget(save_button)
+        theme_layout.addRow("Save as", save_row)
+
+        colors_box = QGroupBox("Colors", container)
+        colors_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
+        colors_layout = QFormLayout(colors_box)
+        colors_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        colors_layout.setSpacing(10)  # Add spacing between form rows
+
+        color_roles = (
+            ("window", "Window background"),
+            ("panel", "Panel background"),
+            ("accent", "Accent / highlight"),
+            ("text", "Primary text"),
+        )
+
+        for role, label in color_roles:
+            button = QPushButton(colors_box)
+            button.clicked.connect(lambda _=False, r=role: self._choose_color(r))
+            self._color_buttons[role] = button
+            colors_layout.addRow(label, button)
+
+        layout.addWidget(theme_box)
+        layout.addWidget(colors_box)
+        layout.addStretch(1)
+
+        self._refresh_color_buttons()
+        return container
+
+    def _build_importers_tab(self, settings: AppSettings) -> QWidget:
+        container = QWidget(self)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        importers_box = QGroupBox("API Keys")
+        importers_box.setContentsMargins(10, 25, 10, 10)  # Increased top margin to add space below title
+        importers_layout = QFormLayout(importers_box)
+        importers_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        importers_layout.setSpacing(10)  # Add spacing between form rows
+
+        self._thingiverse_token_input = QLineEdit(settings.thingiverse_token)
+        self._thingiverse_token_input.setPlaceholderText("Enter your Thingiverse API token")
+        importers_layout.addRow("Thingiverse token", self._thingiverse_token_input)
+
+        self._myminifactory_token_input = QLineEdit(settings.myminifactory_token)
+        self._myminifactory_token_input.setPlaceholderText("Enter your MyMiniFactory API token")
+        importers_layout.addRow("MyMiniFactory token", self._myminifactory_token_input)
+
+        layout.addWidget(importers_box)
         layout.addStretch(1)
         return container
 
@@ -174,6 +295,51 @@ class SettingsDialog(QDialog):
         )
         if chosen:
             self._library_input.setText(chosen)
+
+    def _choose_color(self, role: str) -> None:
+        if role not in self._color_buttons:
+            return
+        current_hex = self._theme_colors.get(role, DEFAULT_THEME_COLORS[role])
+        chosen = QColorDialog.getColor(QColor(current_hex), self, f"Select {role} color")
+        if not chosen.isValid():
+            return
+        self._theme_colors[role] = chosen.name()
+        self._refresh_color_buttons()
+
+    def _handle_theme_selected(self, name: str) -> None:
+        if name == DEFAULT_THEME_NAME:
+            self._theme_colors = DEFAULT_THEME_COLORS.copy()
+        elif name in self._custom_themes:
+            self._theme_colors = self._custom_themes[name].copy()
+        else:
+            self._theme_colors = DEFAULT_THEME_COLORS.copy()
+        self._refresh_color_buttons()
+
+    def _refresh_color_buttons(self) -> None:
+        for role, button in self._color_buttons.items():
+            value = self._theme_colors.get(role, DEFAULT_THEME_COLORS[role])
+            button.setText(value)
+            button.setStyleSheet(f"background-color: {value}; color: {self._text_color_for(value)};")
+
+    def _save_theme(self) -> None:
+        if self._theme_name_input is None or self._theme_combo is None:
+            return
+        name = self._theme_name_input.text().strip() or self._theme_combo.currentText().strip()
+        if not name:
+            QMessageBox.warning(self, "Missing theme name", "Please provide a name for the theme.")
+            return
+        self._custom_themes[name] = self._theme_colors.copy()
+        if self._theme_combo.findText(name) < 0:
+            self._theme_combo.addItem(name)
+        self._theme_combo.setCurrentText(name)
+        self._theme_name_input.clear()
+
+    def _text_color_for(self, background_hex: str) -> str:
+        color = QColor(background_hex)
+        if not color.isValid():
+            return "#000000"
+        brightness = (color.red() * 299 + color.green() * 587 + color.blue() * 114) / 1000
+        return "#000000" if brightness >= 186 else "#ffffff"
 
     def accept(self) -> None:  # type: ignore[override]
         try:
@@ -193,6 +359,11 @@ class SettingsDialog(QDialog):
             auto_refresh_containers=self._auto_refresh_checkbox.isChecked(),
             bootstrap_demo_data=self._demo_checkbox.isChecked(),
             text_preview_limit=max(10_240, self._preview_limit_spin.value() * 1024),
+            theme_name=self._theme_combo.currentText() if self._theme_combo is not None else DEFAULT_THEME_NAME,
+            theme_colors=self._theme_colors.copy(),
+            custom_themes={name: palette.copy() for name, palette in self._custom_themes.items()},
+            thingiverse_token=self._thingiverse_token_input.text(),
+            myminifactory_token=self._myminifactory_token_input.text(),
         )
 
         self._result = updated

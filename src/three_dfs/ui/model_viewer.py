@@ -1,8 +1,8 @@
 """Interactive 3D model viewer using QOpenGLWidget.
 
 Minimal real-time viewport to orbit/pan/zoom common mesh formats such as
-STL/OBJ/PLY/GLTF/GLB (via :mod:`trimesh`), STEP bounding boxes, and optionally
-FBX files when the Autodesk FBX Python SDK is available.
+STL/OBJ/PLY/GLTF/GLB/3MF (via :mod:`trimesh`), STEP bounding boxes, optional
+FBX files, and reconstructed toolpaths for supported G-code programs.
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ from PySide6.QtOpenGL import (
 )
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
-from ..importer import extract_step_metadata
+from ..gcode import GCodePreviewError, analyze_gcode_program
+from ..importer import GCODE_EXTENSIONS, extract_step_metadata
 
 try:  # pragma: no cover - exercised at runtime
     import trimesh  # type: ignore
@@ -243,6 +244,81 @@ def _build_box_arrays(
     return verts, faces
 
 
+def _build_toolpath_arrays(path: Path, *, line_width: float = 0.35) -> tuple[np.ndarray, np.ndarray] | None:
+    try:
+        analysis = analyze_gcode_program(path)
+    except GCodePreviewError:
+        return None
+
+    segments = analysis.segments
+    if not segments:
+        return None
+
+    vertices: list[np.ndarray] = []
+    faces: list[tuple[int, int, int]] = []
+    half_width = max(line_width, 1e-3) / 2.0
+
+    for segment in segments:
+        start = np.array(segment.start, dtype=np.float32)
+        end = np.array(segment.end, dtype=np.float32)
+        direction = end - start
+        length = np.linalg.norm(direction)
+        if not np.isfinite(length) or length <= 0:
+            continue
+
+        axis = direction / length
+        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        if abs(float(np.dot(axis, up))) > 0.95:
+            up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+        side = np.cross(axis, up)
+        side_length = np.linalg.norm(side)
+        if side_length <= 1e-6:
+            up = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            side = np.cross(axis, up)
+            side_length = np.linalg.norm(side)
+            if side_length <= 1e-6:
+                continue
+        side /= side_length
+        up_vec = np.cross(side, axis)
+        up_length = np.linalg.norm(up_vec)
+        if up_length <= 1e-6:
+            continue
+        up_vec /= up_length
+
+        offsets = (
+            (side * half_width) + (up_vec * half_width),
+            (-side * half_width) + (up_vec * half_width),
+            (-side * half_width) + (-up_vec * half_width),
+            (side * half_width) + (-up_vec * half_width),
+        )
+        segment_vertices = [start + offset for offset in offsets]
+        segment_vertices.extend(end + offset for offset in offsets)
+        base_index = len(vertices)
+        vertices.extend(segment_vertices)
+
+        quads = (
+            (0, 1, 2, 3),
+            (4, 5, 6, 7),
+            (0, 1, 5, 4),
+            (1, 2, 6, 5),
+            (2, 3, 7, 6),
+            (3, 0, 4, 7),
+        )
+        for quad in quads:
+            a, b, c, d = (base_index + idx for idx in quad)
+            faces.append((a, b, c))
+            faces.append((a, c, d))
+
+    if not vertices or not faces:
+        return None
+
+    return (
+        np.asarray(vertices, dtype=np.float32),
+        np.asarray(faces, dtype=np.int32),
+    )
+
+
 def load_mesh_data(path: Path | None) -> tuple[_MeshData | None, str | None]:
     if path is None:
         return None, "No model selected."
@@ -254,11 +330,11 @@ def load_mesh_data(path: Path | None) -> tuple[_MeshData | None, str | None]:
     faces: np.ndarray | None = None
     error_message: str | None = None
 
-    if suffix in {".stl", ".obj", ".ply", ".glb", ".gltf"}:
+    if suffix in {".stl", ".obj", ".ply", ".glb", ".gltf", ".3mf"}:
         if trimesh is None:
             return (
                 None,
-                "Install the `trimesh` dependency to enable STL/OBJ/PLY/GLB/GLTF previews.",
+                "Install the `trimesh` dependency to enable STL/OBJ/PLY/GLB/GLTF/3MF previews.",
             )
         trimesh_result = _load_with_trimesh_mesh(path)
         if trimesh_result is not None:
@@ -289,6 +365,14 @@ def load_mesh_data(path: Path | None) -> tuple[_MeshData | None, str | None]:
                 np.array(maxs, dtype=float),
             )
             vertices, faces = v, f
+
+    if vertices is None or faces is None:
+        if suffix in GCODE_EXTENSIONS:
+            toolpath = _build_toolpath_arrays(path)
+            if toolpath is not None:
+                vertices, faces = toolpath
+            elif error_message is None:
+                error_message = "Could not parse G-code toolpath."
 
     if vertices is None or faces is None:
         if error_message is None:

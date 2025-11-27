@@ -857,7 +857,7 @@ class CustomizerPanel(QWidget):
             suffix = path.suffix.lower()
             if content_type.startswith("model/"):
                 return path
-            if suffix in {".stl", ".obj", ".ply", ".glb", ".gltf"}:
+            if suffix in {".stl", ".obj", ".ply", ".glb", ".gltf", ".3mf"}:
                 return path
         return None
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import io
 import logging
+import math
 import mimetypes
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -16,8 +17,11 @@ from urllib.parse import quote, unquote
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from PySide6.QtCore import (
+    QBuffer,
+    QByteArray,
     QObject,
     QRunnable,
+    QSize,
     Qt,
     QThreadPool,
     Signal,
@@ -69,6 +73,12 @@ from .customizer_panel import CustomizerPanel
 from .machine_tag_dialog import MachineTagDialog
 from .model_viewer import ModelViewer, _MeshData, load_mesh_data
 
+try:  # pragma: no cover - optional dependency when QtPdf is missing
+    from PySide6.QtPdf import QPdfDocument, QPdfDocumentRenderOptions
+except Exception:  # noqa: BLE001 - QtPdf might be unavailable on some builds
+    QPdfDocument = None  # type: ignore[assignment]
+    QPdfDocumentRenderOptions = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
     from ..storage import AssetRecord, CustomizationRecord
 
@@ -95,6 +105,8 @@ _IMAGE_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
+_PDF_EXTENSIONS: frozenset[str] = frozenset({".pdf"})
+
 _MODEL_EXTENSIONS: frozenset[str] = SUPPORTED_EXTENSIONS
 
 _TEXT_PREVIEW_EXTENSIONS: frozenset[str] = frozenset(
@@ -103,7 +115,6 @@ _TEXT_PREVIEW_EXTENSIONS: frozenset[str] = frozenset(
         ".csv",
         ".ini",
         ".json",
-        ".gcode",
         ".log",
         ".md",
         ".markdown",
@@ -114,6 +125,7 @@ _TEXT_PREVIEW_EXTENSIONS: frozenset[str] = frozenset(
         ".yaml",
         ".yml",
     }
+    | set(GCODE_EXTENSIONS)
 )
 
 DEFAULT_TEXT_PREVIEW_MAX_BYTES = 200_000
@@ -268,6 +280,7 @@ class PreviewPane(QWidget):
         self._text_unavailable_message: str | None = None
         self._viewer_mesh: _MeshData | None = None
         self._viewer_path: Path | None = None
+        self._viewer_is_gcode = False
         self._viewer_task_counter = 0
         self._viewer_current_task: int | None = None
         self._viewer_workers: dict[int, ViewerLoader] = {}
@@ -530,6 +543,7 @@ class PreviewPane(QWidget):
         self._viewer_error_message = None
         self._text_unavailable_message = None
         self._viewer.clear()
+        self._viewer_is_gcode = False
         self._hide_tab(self._viewer_tab_index, reset_title="3D Viewer")
         self._hide_tab(self._text_tab_index, reset_title="Text")
         self._text_view.clear()
@@ -675,6 +689,7 @@ class PreviewPane(QWidget):
         self._text_unavailable_message = None
         self._viewer_mesh = None
         self._viewer_path = None
+        self._viewer_is_gcode = False
         self._viewer_current_task = None
         self._viewer_workers.clear()
         self._customizer_context = None
@@ -689,15 +704,24 @@ class PreviewPane(QWidget):
         self._hide_tab(self._text_tab_index, reset_title="Text")
 
         # Prepare viewer tab
-        if suffix in _MODEL_EXTENSIONS and path_obj is not None:
+        viewer_ready = path_obj is not None and (suffix in _MODEL_EXTENSIONS or suffix in GCODE_EXTENSIONS)
+        self._viewer_is_gcode = bool(path_obj is not None and suffix in GCODE_EXTENSIONS)
+        if viewer_ready and path_obj is not None:
             self._viewer_path = path_obj
+            viewer_title = "Toolpath" if self._viewer_is_gcode else "3D Viewer"
+            tooltip = (
+                "Interactive toolpath preview reconstructed from G-code commands."
+                if self._viewer_is_gcode
+                else "Interactive 3D viewer for supported meshes."
+            )
             self._show_tab(
                 self._viewer_tab_index,
-                title="3D Viewer",
-                tooltip="Interactive 3D viewer for supported meshes.",
+                title=viewer_title,
+                tooltip=tooltip,
             )
         else:
             self._viewer_path = None
+            self._viewer_is_gcode = False
             message = "3D viewer is only available for supported model formats."
             self._viewer_error_message = message
             self._tabs.setCurrentIndex(0)
@@ -1196,17 +1220,6 @@ class PreviewPane(QWidget):
         if isinstance(parameters, Mapping):
             parameter_html = self._format_parameter_summary(parameters)
 
-        if base_path:
-            descriptor_text = descriptor or base_path
-            self._add_customization_action_button(f"View base: {descriptor_text}", base_path)
-            for derivative in self._list_derivatives_for_path(base_path):
-                if self._asset_record is not None and derivative.path == self._asset_record.path:
-                    continue
-                label = derivative.label or Path(derivative.path).name
-                self._add_customization_action_button(f"Open {label}", derivative.path)
-                if len(self._customization_action_buttons) >= 3:
-                    break
-
         return parts, parameter_html
 
     def _format_parameter_summary(self, parameters: Mapping[str, Any] | None) -> str:
@@ -1383,7 +1396,8 @@ class PreviewPane(QWidget):
         self._configure_text_preview(outcome)
         metadata_entries = list(outcome.metadata)
         if self._viewer_error_message:
-            metadata_entries.append(("3D Viewer", self._viewer_error_message))
+            viewer_label = "Toolpath Preview" if self._viewer_is_gcode else "3D Viewer"
+            metadata_entries.append((viewer_label, self._viewer_error_message))
         if outcome.text_content is None and self._text_unavailable_message:
             metadata_entries.append(("Text Preview", self._text_unavailable_message))
         self._last_metadata_entries = list(metadata_entries)
@@ -2048,6 +2062,19 @@ def _build_preview_outcome(
             text_truncated=truncated,
         )
 
+    if suffix in _PDF_EXTENSIONS:
+        pdf_metadata, thumbnail_bytes, message = _build_pdf_preview(path, size=size)
+        metadata.extend(pdf_metadata)
+        return PreviewOutcome(
+            path=path,
+            metadata=metadata,
+            thumbnail_bytes=thumbnail_bytes,
+            thumbnail_message=message,
+            text_content=text_content,
+            text_role=text_role,
+            text_truncated=truncated,
+        )
+
     if suffix in _MODEL_EXTENSIONS:
         (
             model_metadata,
@@ -2210,6 +2237,65 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
 def _format_datetime(value: datetime) -> str:
     aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     return _format_timestamp(aware.timestamp())
+
+
+def _build_pdf_preview(
+    path: Path,
+    *,
+    size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
+) -> tuple[list[tuple[str, str]], bytes | None, str | None]:
+    metadata: list[tuple[str, str]] = [("Type", "PDF Document")]
+
+    if QPdfDocument is None or QPdfDocumentRenderOptions is None:
+        return metadata, None, "PDF preview support is unavailable in this build."
+
+    document = QPdfDocument()
+    status = document.load(str(path))
+    if status != QPdfDocument.Error.None_:
+        status_name = getattr(status, "name", str(int(status)))
+        return metadata, None, f"Unable to load PDF file ({status_name})."
+
+    page_count = document.pageCount()
+    if page_count >= 0:
+        metadata.append(("Pages", str(page_count)))
+    if page_count <= 0:
+        return metadata, None, "PDF file does not contain renderable pages."
+
+    page_size = document.pagePointSize(0)
+    width_pts = page_size.width()
+    height_pts = page_size.height()
+    if width_pts <= 0 or height_pts <= 0:
+        width_pts = 612.0
+        height_pts = 792.0
+    metadata.append(("Page Size", f"{int(round(width_pts))}×{int(round(height_pts))} pt"))
+
+    max_width = max(1, size[0])
+    max_height = max(1, size[1])
+    scale = min(max_width / width_pts, max_height / height_pts)
+    if not math.isfinite(scale) or scale <= 0:
+        target = float(max(max_width, max_height))
+        scale = target / max(width_pts, height_pts)
+    pixel_width = max(1, int(round(width_pts * scale)))
+    pixel_height = max(1, int(round(height_pts * scale)))
+    render_size = QSize(pixel_width, pixel_height)
+
+    options = QPdfDocumentRenderOptions()
+    options.setRenderFlags(QPdfDocumentRenderOptions.RenderFlag.Annotations)
+    image = document.render(0, render_size, options)
+    if image.isNull():
+        return metadata, None, "PDF preview could not be rendered."
+
+    byte_array = QByteArray()
+    buffer = QBuffer(byte_array)
+    if not buffer.open(QBuffer.WriteOnly):
+        return metadata, None, "Unable to allocate buffer for PDF preview."
+    try:
+        if not image.save(buffer, "PNG"):
+            return metadata, None, "PDF preview could not be encoded."
+    finally:
+        buffer.close()
+
+    return metadata, bytes(byte_array), None
 
 
 def _build_image_preview(path: Path) -> tuple[list[tuple[str, str]], bytes]:

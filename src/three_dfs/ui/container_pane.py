@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import (
+    QEvent,
     QObject,
     QRunnable,
     QSize,
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -55,6 +57,11 @@ logger = logging.getLogger(__name__)
 _METADATA_ROLE = Qt.UserRole + 2
 _ASSET_ID_ROLE = Qt.UserRole + 3
 _PRIMARY_ROLE = Qt.UserRole + 4
+
+# Accent color for automatic links (customized containers, symlinks, etc.)
+_AUTOMATIC_LINK_COLOR = QColor(236, 72, 153)
+_SECTION_CONTENT_MARGINS = (8, 24, 8, 8)
+_SECTION_SPACING = 6
 
 
 @dataclass(slots=True)
@@ -134,6 +141,7 @@ class ContainerPane(QWidget):
         self._attachments.currentItemChanged.connect(self._handle_component_selected)
         self._attachments.setContextMenuPolicy(Qt.CustomContextMenu)
         self._attachments.customContextMenuRequested.connect(self._show_attachments_context_menu)
+        self._attachments.viewport().installEventFilter(self)
         self._linked_here.currentItemChanged.connect(self._handle_component_selected)
         self._links.currentItemChanged.connect(self._handle_component_selected)
         self._components.setObjectName("containerComponents")
@@ -147,9 +155,11 @@ class ContainerPane(QWidget):
         self._components.setIconSize(self._icon_size)
         self._components.setContextMenuPolicy(Qt.CustomContextMenu)
         self._components.customContextMenuRequested.connect(self._show_components_context_menu)
+        self._components.viewport().installEventFilter(self)
         self._has_linked_containers = False
         self._links.setContextMenuPolicy(Qt.CustomContextMenu)
         self._links.customContextMenuRequested.connect(self._show_links_context_menu)
+        self._links.viewport().installEventFilter(self)
         self._components.itemActivated.connect(self._handle_component_activated)
 
         self._preview = PreviewPane(
@@ -160,21 +170,29 @@ class ContainerPane(QWidget):
 
         self._components_group = QGroupBox("Components")
         components_layout = QVBoxLayout()
+        components_layout.setContentsMargins(*_SECTION_CONTENT_MARGINS)
+        components_layout.setSpacing(_SECTION_SPACING)
         components_layout.addWidget(self._components)
         self._components_group.setLayout(components_layout)
 
         self._attachments_group = QGroupBox("Attachments")
         attachments_layout = QVBoxLayout()
+        attachments_layout.setContentsMargins(*_SECTION_CONTENT_MARGINS)
+        attachments_layout.setSpacing(_SECTION_SPACING)
         attachments_layout.addWidget(self._attachments)
         self._attachments_group.setLayout(attachments_layout)
 
         self._linked_here_group = QGroupBox("Linked Here")
         linked_here_layout = QVBoxLayout()
+        linked_here_layout.setContentsMargins(*_SECTION_CONTENT_MARGINS)
+        linked_here_layout.setSpacing(_SECTION_SPACING)
         linked_here_layout.addWidget(self._linked_here)
         self._linked_here_group.setLayout(linked_here_layout)
 
         self._links_group = QGroupBox("Links")
         links_layout = QVBoxLayout()
+        links_layout.setContentsMargins(*_SECTION_CONTENT_MARGINS)
+        links_layout.setSpacing(_SECTION_SPACING)
         links_layout.addWidget(self._links)
         self._links_group.setLayout(links_layout)
 
@@ -264,6 +282,17 @@ class ContainerPane(QWidget):
         QShortcut(QKeySequence("Ctrl+F"), self, activated=self._focus_search)
 
         self.set_container_versions([], selected_version_id=None)
+
+    def eventFilter(self, source: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.MouseButtonPress:
+            is_right_click = event.button() == Qt.RightButton
+            if is_right_click and source in {
+                self._components.viewport(),
+                self._attachments.viewport(),
+                self._links.viewport(),
+            }:
+                self._suppress_link_navigation = True
+        return super().eventFilter(source, event)
 
     def set_container(
         self,
@@ -528,6 +557,10 @@ class ContainerPane(QWidget):
             if source_label:
                 metadata["source_label"] = source_label
 
+            link_type = entry.get("link_type")
+            if isinstance(link_type, str) and link_type.strip():
+                metadata["link_type"] = link_type.strip()
+
             key = (link_id, source_container_id, metadata.get("link_target"))
             if key in seen:
                 continue
@@ -701,7 +734,42 @@ class ContainerPane(QWidget):
                 if source_path:
                     tooltip_bits.append(source_path)
             item.setToolTip("\n".join(bit for bit in tooltip_bits if bit))
+        else:
+            self._apply_link_status_style(item, component.kind or "", metadata)
         list_widget.addItem(item)
+
+    def _apply_link_status_style(
+        self,
+        item: QListWidgetItem,
+        kind: str,
+        metadata: Mapping[str, Any] | None,
+    ) -> None:
+        normalized_kind = kind.strip().casefold()
+        if normalized_kind not in {"link", "linked_here"}:
+            return
+        if metadata is None:
+            return
+        link_type = self._extract_link_type(metadata)
+        if link_type is None or link_type.casefold() == "link":
+            return
+
+        item.setForeground(_AUTOMATIC_LINK_COLOR)
+
+        tooltip = item.toolTip() or ""
+        tooltip_lines = [line for line in tooltip.split("\n") if line.strip()]
+        tooltip_lines.append(f"Automatic link ({link_type})")
+        target = metadata.get("link_target")
+        if isinstance(target, str) and target.strip():
+            tooltip_lines.append(target.strip())
+        item.setToolTip("\n".join(dict.fromkeys(tooltip_lines)))
+
+    @staticmethod
+    def _extract_link_type(metadata: Mapping[str, Any]) -> str | None:
+        candidate = metadata.get("link_type")
+        if isinstance(candidate, str):
+            text = candidate.strip()
+            return text or None
+        return None
 
     def _update_action_states(self) -> None:
         has_container = self._container_path is not None
@@ -979,6 +1047,56 @@ class ContainerPane(QWidget):
 
         self.refreshRequested.emit()
 
+    def _rename_link_item(self, item: QListWidgetItem) -> None:
+        metadata = self._item_metadata(item)
+        target_container_id = self._safe_int(metadata.get("target_container_id"))
+        if self._container_asset_id is None or target_container_id is None:
+            return
+
+        current_label = item.text()
+        new_label, ok = QInputDialog.getText(
+            self,
+            "Rename Link",
+            "New link label:",
+            QLineEdit.Normal,
+            current_label,
+        )
+
+        if not ok or not new_label or new_label == current_label:
+            return
+
+        if self._asset_service is None:
+            return
+        current_asset = self._asset_service.get_asset(self._container_asset_id)
+        if not current_asset or not current_asset.metadata:
+            return
+
+        current_meta = dict(current_asset.metadata)
+        links = list(current_meta.get("links", []))
+        
+        # To handle multiple links to the same container, we need to be careful.
+        # We only have the label to distinguish them.
+        renamed = False
+        for link in links:
+            if (link.get("target_container_id") == target_container_id and
+                link.get("label") == current_label):
+                link["label"] = new_label
+                renamed = True
+                break
+        
+        if not renamed:
+            # Fallback: if we didn't find a match with the label,
+            # maybe the label in metadata is missing. Rename the first match.
+            for link in links:
+                if link.get("target_container_id") == target_container_id:
+                    link["label"] = new_label
+                    break
+
+        current_meta["links"] = links
+        self._asset_service.update_asset(self._container_asset_id, metadata=current_meta)
+        
+        self.refreshRequested.emit()
+
     # ------------------------------------------------------------------
     # Breadcrumb helpers
     # ------------------------------------------------------------------
@@ -1042,6 +1160,7 @@ class ContainerPane(QWidget):
         add_act = None
         set_primary_act = None
         delete_file_act = None
+        rename_link_act = None
         open_item_act = None
         open_source_act = None
         open_act = None
@@ -1069,6 +1188,8 @@ class ContainerPane(QWidget):
                 if kind in {"file", "component", "attachment", "link"}:
                     delete_label = "Delete Link…" if kind == "link" else "Delete File…"
                     delete_file_act = menu.addAction(delete_label)
+                if kind == "link":
+                    rename_link_act = menu.addAction("Rename Link…")
             open_item_act = menu.addAction("Open Item")
             open_item_act.setEnabled(self._can_open_with_handler(item))
             upstream_links = self._extract_upstream_links(item)
@@ -1102,6 +1223,9 @@ class ContainerPane(QWidget):
         elif delete_file_act is not None and action == delete_file_act:
             if item is not None:
                 self._delete_file_item(item)
+        elif rename_link_act is not None and action == rename_link_act:
+            if item is not None:
+                self._rename_link_item(item)
         elif action == open_item_act:
             raw_kind = item.data(Qt.UserRole + 1) if item is not None else None
             kind = str(raw_kind or "").strip().casefold()
@@ -1396,6 +1520,14 @@ class ContainerPane(QWidget):
         except Exception:
             return raw_path
         return name or raw_path
+
+    def _safe_int(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
 
     def _placeholder_icon(self) -> QPixmap:
         """Return an icon for placeholder components."""

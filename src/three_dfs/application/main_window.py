@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
+from datetime import UTC, datetime
 
 from PySide6.QtCore import QCoreApplication, QFileSystemWatcher, Qt, QThreadPool, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QAction, QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -22,9 +26,15 @@ from ..search import LibrarySearch
 from ..storage import AssetService
 from ..ui.container_pane import ContainerPane
 from ..ui.preview_pane import PreviewPane
+from ..ui.bulk_import_dialog import BulkImportDialog
 from ..ui.settings_dialog import SettingsDialog
+from ..ui.url_dialog import UrlDialog
 from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
+from ..ui.widgets import RepositoryListWidget
+from ..ui.delegates import StarDelegate
+from ..importers import ImporterManager
+from PySide6.QtWidgets import QInputDialog, QMessageBox
 from .asset_manager import AssetManager
 from .container_manager import ContainerManager
 from .container_scanner import (
@@ -41,6 +51,9 @@ from .settings import (
     save_app_settings,
 )
 from .ui_manager import UIManager
+from .bulk_import_manager import BulkImportManager
+from .undo_manager import UndoManager
+
 
 WINDOW_TITLE = "3dfs"
 
@@ -69,17 +82,21 @@ class MainWindow(QMainWindow):
         self._bootstrap_demo_data = self._env_bootstrap_demo or self._settings.bootstrap_demo_data
         self._auto_refresh_containers = self._settings.auto_refresh_containers
 
+        self._undo_manager = UndoManager(self)
         self._container_manager = ContainerManager(self)
         self._library_manager = LibraryManager(self)
         self._ui_manager = UIManager(self)
         self._menu_manager = MenuManager(self)
         self._asset_manager = AssetManager(self)
+        self._importer_manager = ImporterManager()
+        self._bulk_import_manager = BulkImportManager(self)
 
         self._asset_service = AssetService()
         self._library_search = LibrarySearch(service=self._asset_service)
-        self._repository_list = QListWidget(self)
+        self._repository_list = RepositoryListWidget(self, self)
         self._repository_list.setObjectName("repositoryList")
         self._repository_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._repository_list.setItemDelegate(StarDelegate(self._repository_list))
         self._toggle_repo_action: QAction | None = None
         self._tag_panel_action: QAction | None = None
         # Right-click context menu on repository list
@@ -157,6 +174,7 @@ class MainWindow(QMainWindow):
             self._rescan_library()
         # Apply persisted interface preferences
         self._toggle_repository_sidebar(self._settings.show_repository_sidebar)
+        self._apply_theme_palette(self._settings.resolved_theme_colors())
 
     def _is_safe_path_string(self, path_str: str) -> bool:
         """Validate that a path string is safe before any Path operations."""
@@ -245,6 +263,27 @@ class MainWindow(QMainWindow):
     def _build_menu(self, *args, **kwargs):
         self._menu_manager.build_menu(*args, **kwargs)
 
+        edit_menu = self.menuBar().addMenu("&Edit")
+        undo_action = QAction("Undo", self)
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.triggered.connect(self._undo_manager.undo)
+        edit_menu.addAction(undo_action)
+        self._undo_action = undo_action
+
+        redo_action = QAction("Redo", self)
+        redo_action.setShortcut("Ctrl+Shift+Z")
+        redo_action.triggered.connect(self._undo_manager.redo)
+        edit_menu.addAction(redo_action)
+        self._redo_action = redo_action
+
+        self._undo_manager.stackChanged.connect(self._update_undo_redo_actions)
+        self._update_undo_redo_actions()
+
+    def _update_undo_redo_actions(self):
+        self._undo_action.setEnabled(self._undo_manager.can_undo())
+        self._redo_action.setEnabled(self._undo_manager.can_redo())
+
+
     def _open_settings_dialog(self) -> None:
         dialog = SettingsDialog(self._settings, self)
         if dialog.exec() != QDialog.Accepted:
@@ -253,6 +292,71 @@ class MainWindow(QMainWindow):
         if new_settings is None:
             return
         self._apply_settings(new_settings)
+
+    def _open_bulk_import_dialog(self) -> None:
+        dialog = BulkImportDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        # Use the already initialized bulk import manager
+        self._bulk_import_manager.perform_bulk_import(dialog)
+
+    def add_web_link(self) -> None:
+        """Add a web link as a new asset."""
+        dialog = UrlDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            url = dialog.url()
+            label = dialog.label()
+
+            # Validate URL
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            if not parsed.scheme or parsed.scheme not in ('http', 'https'):
+                self.statusBar().showMessage(f"Invalid URL format: {url}", 5000)
+                return
+
+            # Create a unique path for the URL asset
+            import uuid
+            unique_id = str(uuid.uuid4())
+            url_path = f"urls/{unique_id}"
+
+            # Create metadata for the URL asset
+            metadata = {
+                "kind": "url",
+                "url": url,
+                "description": f"Web link to {url}",
+                "created_at": str(datetime.now(UTC).isoformat())
+            }
+
+            # Create the asset record
+            asset = self._asset_service.create_asset(
+                path=url_path,
+                label=label,
+                metadata=metadata
+            )
+
+            # Refresh the repository to show the new asset
+            self._populate_repository()
+            self.statusBar().showMessage(f"Added web link: {label}", 5000)
+
+    def open_url_in_browser(self, url: str) -> None:
+        """Open the given URL in the user's default web browser."""
+        # Validate URL format
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if not parsed.scheme or parsed.scheme not in ('http', 'https'):
+            # Add default scheme if not provided
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            parsed = urlparse(url)
+
+        if parsed.scheme in ('http', 'https'):
+            QDesktopServices.openUrl(QUrl(url))
+            self.statusBar().showMessage(f"Opening {url} in web browser...", 3000)
+        else:
+            self.statusBar().showMessage(f"Invalid URL format: {url}", 3000)
 
     def _apply_settings(self, new_settings: AppSettings) -> None:
         previous = self._settings
@@ -286,6 +390,59 @@ class MainWindow(QMainWindow):
             self._preview_pane.set_text_preview_limit(new_settings.text_preview_limit)
             self._preview_pane.reload_current_preview()
 
+        if (
+            new_settings.theme_name != previous.theme_name
+            or new_settings.theme_colors != previous.theme_colors
+            or new_settings.custom_themes != previous.custom_themes
+        ):
+            self._apply_theme_palette(new_settings.resolved_theme_colors())
+
+    def _apply_theme_palette(self, colors: Mapping[str, str]) -> None:
+        def _color_for(key: str, fallback: str) -> QColor:
+            value = colors.get(key, fallback) if isinstance(colors, Mapping) else fallback
+            candidate = QColor(value)
+            return candidate if candidate.isValid() else QColor(fallback)
+
+        window_color = _color_for("window", "#202124")
+        panel_color = _color_for("panel", "#2b2c30")
+        accent_color = _color_for("accent", "#5c9cff")
+        text_color = _color_for("text", "#f0f0f0")
+
+        palette = self.palette()
+        palette.setColor(QPalette.Window, window_color)
+        palette.setColor(QPalette.Base, panel_color)
+        palette.setColor(QPalette.AlternateBase, panel_color.lighter(115))
+        palette.setColor(QPalette.Button, panel_color)
+        palette.setColor(QPalette.ButtonText, text_color)
+        palette.setColor(QPalette.Text, text_color)
+        palette.setColor(QPalette.WindowText, text_color)
+        palette.setColor(QPalette.BrightText, text_color)
+        palette.setColor(QPalette.ToolTipBase, panel_color)
+        palette.setColor(QPalette.ToolTipText, text_color)
+        palette.setColor(QPalette.Highlight, accent_color)
+        palette.setColor(QPalette.Link, accent_color)
+        palette.setColor(QPalette.LinkVisited, accent_color.darker(110))
+        self.setPalette(palette)
+
+        stylesheet = f"""
+        QWidget {{ color: {text_color.name()}; }}
+        QMainWindow, QDialog, QTabWidget::pane {{ background-color: {window_color.name()}; }}
+        QGroupBox, QLineEdit, QListWidget, QTreeView, QTableView, QTextEdit, QComboBox, QPushButton {{
+            background-color: {panel_color.name()};
+            color: {text_color.name()};
+            border: 1px solid {panel_color.darker(115).name()};
+        }}
+        QPushButton:hover, QToolButton:hover {{
+            background-color: {accent_color.name()};
+            color: {window_color.name()};
+        }}
+        QLineEdit, QListWidget::item:selected, QTreeView::item:selected, QTableView::item:selected {{
+            selection-background-color: {accent_color.name()};
+            selection-color: {window_color.name()};
+        }}
+        """
+        self.setStyleSheet(stylesheet)
+
     def _show_repo_context_menu(self, *args, **kwargs):
         self._menu_manager.show_repo_context_menu(*args, **kwargs)
 
@@ -317,7 +474,7 @@ class MainWindow(QMainWindow):
         self._ui_manager.show_container(*args, **kwargs)
 
     def _apply_library_filters(self, *args, **kwargs):
-        self._library_manager.apply_library_filters(*args, **kwargs)
+        self._library_manager.apply_library_filters()
 
     def _run_library_search(self, *args, **kwargs):
         return self._library_manager.run_library_search(*args, **kwargs)
@@ -331,6 +488,27 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Container helpers
     # ------------------------------------------------------------------
+    def _import_from_url(self):
+        """Import a container from a URL."""
+        importers = self._importer_manager._importers.keys()
+        importer_name, ok = QInputDialog.getItem(self, "Import from URL", "Select Importer:", list(importers), 0, False)
+        if ok and importer_name:
+            url, ok = QInputDialog.getText(self, "Import from URL", "URL:")
+            if ok and url:
+                try:
+                    container_path = self._importer_manager.import_container(importer_name, url, self._settings)
+                    self._container_manager.create_or_update_container(
+                        container_path,
+                        select_in_repo=True,
+                        show_container=True,
+                    )
+                except NotImplementedError:
+                    QMessageBox.warning(self, "Not Implemented", "This importer is not yet implemented.")
+                except ValueError as e:
+                    QMessageBox.critical(self, "Error", f"Invalid importer: {e}")
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"An error occurred: {e}")
+
     def _create_or_update_container(self, *args, **kwargs):
         self._container_manager.create_or_update_container(*args, **kwargs)
 
