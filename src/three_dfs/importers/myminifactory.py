@@ -6,6 +6,7 @@ import os
 import re
 from pathlib import Path
 from ..config import get_config
+from ..application.settings import AppSettings
 
 from .base import Importer
 
@@ -13,7 +14,7 @@ from .base import Importer
 class MyMiniFactoryImporter(Importer):
     """Importer for MyMiniFactory."""
 
-    def import_container(self, url: str, settings: "AppSettings") -> Path:
+    def import_container(self, url: str, settings: AppSettings) -> Path:
         """Import a container from a given URL."""
         access_token = settings.myminifactory_token
         if not access_token:
