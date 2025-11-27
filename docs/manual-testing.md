@@ -54,6 +54,7 @@ Use this checklist alongside the automated test suite when validating releases. 
 
 ## G-code preview rendering
 
+
 1. Select a G-code asset and verify the **Thumbnail**, **Toolpath**, and **Text** tabs are enabled. Interact with the toolpath preview (orbit/pan/zoom) to confirm the 3D reconstruction renders without errors.
 2. Add hint tags such as `GCodeHint:tool=EndMill`, `GCodeHint:workpiece=120x80`, or `GCodeHint:cut_color=#00ff88` and request a refresh; confirm both the thumbnail and toolpath previews update with the new annotations and colours.
 3. Remove the hint tags and ensure the previews revert to the default colour scheme on the next refresh.

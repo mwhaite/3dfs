@@ -20,7 +20,9 @@ DEFAULT_GCODE_PREVIEW_SIZE: tuple[int, int] = (768, 512)
 DEFAULT_GCODE_PREVIEW_ROOT: Path = Path.home() / ".3dfs" / "gcode_previews"
 """Filesystem location where cached G-code previews are stored."""
 
-_GCODE_WORD_PATTERN = re.compile(r"([A-Za-z])([-+]?(?:\d+\.?\d*|\.\d+))")
+
+_GCODE_WORD_PATTERN = re.compile(r"([A-Za-z])([-+]?\d+(?:\.\d+)?)")
+
 _PAREN_COMMENT_PATTERN = re.compile(r"\([^)]*\)")
 
 
