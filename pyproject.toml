@@ -26,6 +26,7 @@ dependencies = [
   "numpy>=1.26",
   "SQLAlchemy>=2.0",
   "trimesh>=4.4",
+  "requests>=2.31",
 ]
 
 [project.optional-dependencies]

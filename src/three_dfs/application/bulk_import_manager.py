@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import logging
 import shutil
-from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ..config import get_config
 from ..importer import SUPPORTED_EXTENSIONS
 
 if TYPE_CHECKING:
-    from .main_window import MainWindow
     from ..ui.bulk_import_dialog import BulkImportDialog
+    from .main_window import MainWindow
 
 
 logger = logging.getLogger(__name__)
@@ -72,7 +70,13 @@ class BulkImportManager:
             f"Bulk import completed: {len(files_to_import)} files imported.", 5000
         )
 
-    def _collect_files(self, source_dir: Path, extensions: list[str], include_subdirs: bool, flatten: bool) -> list[Path]:
+    def _collect_files(
+        self,
+        source_dir: Path,
+        extensions: list[str],
+        include_subdirs: bool,
+        flatten: bool
+    ) -> list[Path]:
         """Collect files to import based on criteria."""
         files = []
         patterns = [f"*{ext}" for ext in extensions]
@@ -95,17 +99,14 @@ class BulkImportManager:
         return sorted(files)  # Sort for consistent processing order
 
     def _import_one_container_per_model(
-        self, 
-        files: list[Path], 
-        source_dir: Path, 
-        use_path_for_tags: bool, 
+        self,
+        files: list[Path],
+        source_dir: Path,
+        use_path_for_tags: bool,
         flatten: bool
     ) -> None:
         """Import each file as a separate container."""
-        from .container_manager import ContainerManager
-        
-        container_manager = self._main_window._container_manager
-        
+
         for file_path in files:
             # Get the relative path from source_dir to use for naming/organization
             try:
@@ -128,12 +129,12 @@ class BulkImportManager:
             # Create a new container for this file
             container_folder = source_dir.parent / "bulk_import" / container_name
             container_folder.mkdir(parents=True, exist_ok=True)
-            
+
             # Copy the file to the container
             dest_file = container_folder / file_path.name
             if not dest_file.exists():
                 shutil.copy2(file_path, dest_file)
-            
+
             # Add to database as container
             label = f"Container: {container_name}"
             metadata: dict[str, Any] = {
@@ -142,7 +143,7 @@ class BulkImportManager:
                 "display_name": container_name,
                 "created_from_bulk_import": True,
             }
-            
+
             # Add tags if requested
             if use_path_for_tags:
                 # Use the relative directory structure as tags
@@ -165,13 +166,13 @@ class BulkImportManager:
             # Create asset record in database
             existing = self._main_window._asset_service.get_asset_by_path(str(container_folder))
             if existing is None:
-                created_asset = self._main_window._asset_service.create_asset(
+                self._main_window._asset_service.create_asset(
                     str(container_folder),
                     label=label,
                     metadata=metadata,
                 )
             else:
-                created_asset = self._main_window._asset_service.update_asset(
+                self._main_window._asset_service.update_asset(
                     existing.id,
                     label=label,
                     metadata=metadata,
@@ -182,15 +183,12 @@ class BulkImportManager:
 
     def _import_all_to_single_container(self, files: list[Path], source_dir: Path, use_path_for_tags: bool) -> None:
         """Import all files to a single container."""
-        from .container_manager import ContainerManager
-        
-        container_manager = self._main_window._container_manager
-        
+
         # Create a single container for all files
         container_name = f"bulk_import_{source_dir.name}"
         container_folder = source_dir.parent / container_name
         container_folder.mkdir(parents=True, exist_ok=True)
-        
+
         # Prepare metadata for the container
         metadata: dict[str, Any] = {
             "kind": "container",
@@ -198,7 +196,7 @@ class BulkImportManager:
             "display_name": container_name,
             "created_from_bulk_import": True,
         }
-        
+
         # Add tags if requested
         if use_path_for_tags:
             metadata["tags"] = source_dir.name  # Use source directory name as tag
@@ -217,9 +215,9 @@ class BulkImportManager:
                     ext_part = original_dest_file.suffix
                     dest_file = container_folder / f"{name_part}_{counter}{ext_part}"
                     counter += 1
-                
+
                 shutil.copy2(file_path, dest_file)
-            
+
             component_entry = {
                 "path": str(dest_file),
                 "label": dest_file.name,
@@ -233,13 +231,13 @@ class BulkImportManager:
         label = f"Container: {container_name}"
         existing = self._main_window._asset_service.get_asset_by_path(str(container_folder))
         if existing is None:
-            created_asset = self._main_window._asset_service.create_asset(
+            self._main_window._asset_service.create_asset(
                 str(container_folder),
                 label=label,
                 metadata=metadata,
             )
         else:
-            created_asset = self._main_window._asset_service.update_asset(
+            self._main_window._asset_service.update_asset(
                 existing.id,
                 label=label,
                 metadata=metadata,

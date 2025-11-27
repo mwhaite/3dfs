@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import abc
-
+from pathlib import Path
 
 from ..application.settings import AppSettings
 
@@ -12,6 +12,6 @@ class Importer(abc.ABC):
     """Base class for all importers."""
 
     @abc.abstractmethod
-    def import_container(self, url: str, settings: AppSettings) -> None:
+    def import_container(self, url: str, settings: AppSettings) -> Path:
         """Import a container from a given URL."""
         raise NotImplementedError

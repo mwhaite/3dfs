@@ -34,7 +34,6 @@ class RepositoryListWidget(QListWidget):
         """Handle double-click events on repository items."""
         # Get the asset record to check if it's a URL type
         asset_id = item.data(Qt.UserRole)
-        asset_path = item.data(Qt.UserRole + 1) or item.text()
 
         if asset_id is not None:
             asset = self._main_window._asset_service.get_asset(int(asset_id))

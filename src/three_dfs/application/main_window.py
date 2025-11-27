@@ -7,35 +7,34 @@ import os
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
-from PySide6.QtCore import QCoreApplication, QFileSystemWatcher, Qt, QThreadPool, QTimer
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QAction, QColor, QPalette
+from PySide6.QtCore import QCoreApplication, QFileSystemWatcher, Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
-    QListWidget,
+    QInputDialog,
     QMainWindow,
+    QMessageBox,
     QSplitter,
     QToolButton,
     QWidget,
 )
 
 from ..config import configure, get_config
+from ..importers import ImporterManager
 from ..search import LibrarySearch
 from ..storage import AssetService
-from ..ui.container_pane import ContainerPane
-from ..ui.preview_pane import PreviewPane
 from ..ui.bulk_import_dialog import BulkImportDialog
+from ..ui.container_pane import ContainerPane
+from ..ui.delegates import StarDelegate
+from ..ui.preview_pane import PreviewPane
 from ..ui.settings_dialog import SettingsDialog
-from ..ui.url_dialog import UrlDialog
 from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
+from ..ui.url_dialog import UrlDialog
 from ..ui.widgets import RepositoryListWidget
-from ..ui.delegates import StarDelegate
-from ..importers import ImporterManager
-from PySide6.QtWidgets import QInputDialog, QMessageBox
 from .asset_manager import AssetManager
+from .bulk_import_manager import BulkImportManager
 from .container_manager import ContainerManager
 from .container_scanner import (
     ContainerRefreshRequest,
@@ -51,9 +50,7 @@ from .settings import (
     save_app_settings,
 )
 from .ui_manager import UIManager
-from .bulk_import_manager import BulkImportManager
 from .undo_manager import UndoManager
-
 
 WINDOW_TITLE = "3dfs"
 
@@ -329,7 +326,7 @@ class MainWindow(QMainWindow):
             }
 
             # Create the asset record
-            asset = self._asset_service.create_asset(
+            self._asset_service.create_asset(
                 path=url_path,
                 label=label,
                 metadata=metadata

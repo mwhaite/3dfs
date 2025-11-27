@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .base import Importer
-from .thingiverse import ThingiverseImporter
 from .myminifactory import MyMiniFactoryImporter
+from .thingiverse import ThingiverseImporter
 
 if TYPE_CHECKING:
     from ..application.settings import AppSettings

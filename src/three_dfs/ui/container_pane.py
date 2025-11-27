@@ -1073,7 +1073,7 @@ class ContainerPane(QWidget):
 
         current_meta = dict(current_asset.metadata)
         links = list(current_meta.get("links", []))
-        
+
         # To handle multiple links to the same container, we need to be careful.
         # We only have the label to distinguish them.
         renamed = False
@@ -1083,7 +1083,7 @@ class ContainerPane(QWidget):
                 link["label"] = new_label
                 renamed = True
                 break
-        
+
         if not renamed:
             # Fallback: if we didn't find a match with the label,
             # maybe the label in metadata is missing. Rename the first match.
@@ -1094,7 +1094,7 @@ class ContainerPane(QWidget):
 
         current_meta["links"] = links
         self._asset_service.update_asset(self._container_asset_id, metadata=current_meta)
-        
+
         self.refreshRequested.emit()
 
     # ------------------------------------------------------------------
