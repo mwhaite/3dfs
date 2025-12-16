@@ -69,7 +69,7 @@ from ..thumbnails import (
     ThumbnailResult,
 )
 from .customizer_dialog import CustomizerDialog, CustomizerSessionConfig
-from .customizer_panel import CustomizerPanel
+from .customizer_panel import CustomizerPanel, CustomizerPreviewWidget
 from .machine_tag_dialog import MachineTagDialog
 from .model_viewer import ModelViewer, _MeshData, load_mesh_data
 
@@ -405,15 +405,23 @@ class PreviewPane(QWidget):
             asset_service=self._asset_service,
             parent=self,
         )
+        self._customizer_preview_widget = CustomizerPreviewWidget(self)
+        self._customizer_panel.set_preview_widget(self._customizer_preview_widget)
         self._customizer_panel.customizationSucceeded.connect(self._handle_customizer_success)
+        self._customizer_panel.previewUpdated.connect(self._activate_customizer_preview_tab)
         self._customizer_tab_index = self._tabs.addTab(
             self._customizer_panel,
             "Customizer",
+        )
+        self._customizer_preview_tab_index = self._tabs.addTab(
+            self._customizer_preview_widget,
+            "Render",
         )
         for idx, title in (
             (self._viewer_tab_index, "3D Viewer"),
             (self._text_tab_index, "Text"),
             (self._customizer_tab_index, "Customizer"),
+            (self._customizer_preview_tab_index, "Render"),
         ):
             self._hide_tab(idx, reset_title=title)
 
@@ -547,6 +555,10 @@ class PreviewPane(QWidget):
         self._hide_tab(self._viewer_tab_index, reset_title="3D Viewer")
         self._hide_tab(self._text_tab_index, reset_title="Text")
         self._text_view.clear()
+        self._hide_tab(self._customizer_preview_tab_index, reset_title="Render")
+        self._tabs.removeTab(self._customizer_preview_tab_index)
+        self._customizer_preview_widget.deleteLater()
+
         self._hide_tab(self._customizer_tab_index, reset_title="Customizer")
         self._tabs.removeTab(self._customizer_tab_index)
         self._customizer_panel.deleteLater()
@@ -554,12 +566,20 @@ class PreviewPane(QWidget):
             asset_service=self._asset_service,
             parent=self,
         )
+        self._customizer_preview_widget = CustomizerPreviewWidget(self)
+        self._customizer_panel.set_preview_widget(self._customizer_preview_widget)
         self._customizer_panel.customizationSucceeded.connect(self._handle_customizer_success)
+        self._customizer_panel.previewUpdated.connect(self._activate_customizer_preview_tab)
         self._customizer_tab_index = self._tabs.addTab(
             self._customizer_panel,
             "Customizer",
         )
+        self._customizer_preview_tab_index = self._tabs.addTab(
+            self._customizer_preview_widget,
+            "Render",
+        )
         self._hide_tab(self._customizer_tab_index, reset_title="Customizer")
+        self._hide_tab(self._customizer_preview_tab_index, reset_title="Render")
         self._customizer_context = None
         self._customize_button.setVisible(False)
         self._customize_button.setEnabled(False)
@@ -914,6 +934,7 @@ class PreviewPane(QWidget):
 
     def _prepare_customizer(self, absolute_path: Path) -> None:
         self._hide_tab(self._customizer_tab_index, reset_title="Customizer")
+        self._hide_tab(self._customizer_preview_tab_index, reset_title="Render")
         self._customizer_panel.clear()
 
         suffix = absolute_path.suffix.lower()
@@ -947,6 +968,12 @@ class PreviewPane(QWidget):
                         title="Customizer",
                         tooltip="Launch parameter customizer",
                     )
+                    self._show_tab(
+                        self._customizer_preview_tab_index,
+                        title="Render",
+                        tooltip="Preview the 3D render produced from the current parameters",
+                        enabled=True,
+                    )
                     if suffix == ".scad":
                         self._tabs.setCurrentIndex(self._customizer_tab_index)
 
@@ -954,6 +981,12 @@ class PreviewPane(QWidget):
         except (RecursionError, ValueError, OSError) as e:
             logger.error("Failed to prepare customizer due to path issues: %s", e)
             self._customizer_context = None
+
+    def _activate_customizer_preview_tab(self) -> None:
+        try:
+            self._tabs.setCurrentIndex(self._customizer_preview_tab_index)
+        except AttributeError:
+            pass
 
     def _build_customizer_context(self, absolute_path: Path) -> CustomizerSessionConfig | None:
         if self._asset_service is None:
@@ -1562,6 +1595,11 @@ class PreviewPane(QWidget):
                 self._asset_record.id,
                 metadata=metadata,
             )
+        except KeyError:
+            logger.warning(
+                "Asset %s no longer exists, cannot update thumbnail metadata",
+                self._asset_record.id,
+            )
         except Exception:
             logger.exception(
                 "Failed to persist captured thumbnail for %s",
@@ -1840,6 +1878,46 @@ class PreviewPane(QWidget):
         if not tag_value:
             return
         self.tagFilterRequested.emit(tag_value)
+
+    def setAcceptDrops(self, on: bool) -> None:
+        """Override setAcceptDrops to enable drag and drop for the preview pane."""
+        super().setAcceptDrops(on)
+        # Let parent handle drops if we can't handle them directly
+        if hasattr(self, 'parent') and self.parent():
+            self.parent().setAcceptDrops(on)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        """Handle drag enter events - pass through to parent if this widget doesn't handle them directly."""
+        # Get parent container pane
+        parent = self.parent()
+        if parent and hasattr(parent, 'dragEnterEvent'):
+            # Pass the event to the parent
+            parent.dragEnterEvent(event)
+            if event.isAccepted():
+                return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        """Handle drag move events - pass through to parent."""
+        # Get parent container pane
+        parent = self.parent()
+        if parent and hasattr(parent, 'dragMoveEvent'):
+            # Pass the event to the parent
+            parent.dragMoveEvent(event)
+            if event.isAccepted():
+                return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        """Handle drop events - pass through to parent."""
+        # Get parent container pane
+        parent = self.parent()
+        if parent and hasattr(parent, 'dropEvent'):
+            # Pass the event to the parent
+            parent.dropEvent(event)
+            if event.isAccepted():
+                return
+        super().dropEvent(event)
 
 
 class _PreviewMachineTagManager:

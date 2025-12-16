@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from subprocess import CalledProcessError
 from unittest.mock import patch
 
 import pytest
 
+from three_dfs.customizer import ParameterSchema
 from three_dfs.customizer.openscad import OpenSCADBackend
 
 
@@ -126,3 +129,93 @@ def test_plan_build_writes_customized_source(fixture_path: Path, tmp_path: Path)
     assert "segments = 6; // [3:1:24]" in text
     # Ensure material default updated while keeping comment annotation
     assert 'material = "steel"; // ["plastic", "steel", "wood"]' in text
+
+
+def test_plan_build_reports_render_failures(fixture_path: Path, tmp_path: Path) -> None:
+    backend = OpenSCADBackend()
+    schema = backend.load_schema(fixture_path)
+    overrides = {"segments": 5}
+
+    error = CalledProcessError(
+        1,
+        ["openscad"],
+        output="Previewing…\n",
+        stderr="ERROR: invalid expression\n",
+    )
+
+    with patch("three_dfs.customizer.openscad.subprocess.run", side_effect=error):
+        with pytest.raises(RuntimeError) as excinfo:
+            backend.plan_build(
+                fixture_path,
+                schema,
+                overrides,
+                output_dir=tmp_path / "build",
+                execute=True,
+            )
+
+    assert "OpenSCAD render failed" in str(excinfo.value)
+    assert "invalid expression" in str(excinfo.value)
+
+
+def test_plan_build_skips_expression_defaults(tmp_path: Path) -> None:
+    source = tmp_path / "expression.scad"
+    source.write_text(
+        "width = 10;\n"
+        "count = ceil(width / 2);\n"
+        "module demo() { cube([width, width, width]); }\n",
+        encoding="utf-8",
+    )
+
+    backend = OpenSCADBackend()
+    schema = backend.load_schema(source)
+    descriptor_map = {descriptor.name: descriptor for descriptor in schema.parameters}
+    assert descriptor_map["count"].raw_expression is True
+
+    session = backend.plan_build(
+        source,
+        schema,
+        {},
+        output_dir=tmp_path / "build",
+    )
+
+    overrides = [
+        session.command[index + 1]
+        for index, token in enumerate(session.command)
+        if token == "-D"
+    ]
+    assert not any(item.startswith("count=") for item in overrides)
+
+    customized_source = Path(session.artifacts[1].path)
+    text = customized_source.read_text(encoding="utf-8")
+    assert "count = ceil(width / 2);" in text
+
+
+def test_plan_build_handles_missing_expression_flag(tmp_path: Path) -> None:
+    source = tmp_path / "legacy_expression.scad"
+    source.write_text(
+        "foo = 5;\n"
+        "bar = foo * 2;\n"
+        "cube([foo, bar, foo]);\n",
+        encoding="utf-8",
+    )
+
+    backend = OpenSCADBackend()
+    schema = backend.load_schema(source)
+    stripped = ParameterSchema(
+        parameters=tuple(replace(descriptor, raw_expression=False) for descriptor in schema.parameters),
+        metadata=schema.metadata,
+    )
+
+    session = backend.plan_build(
+        source,
+        stripped,
+        {},
+        output_dir=tmp_path / "build",
+    )
+
+    overrides = [
+        session.command[index + 1]
+        for index, token in enumerate(session.command)
+        if token == "-D"
+    ]
+    assert not any(item.startswith("bar=") for item in overrides)
