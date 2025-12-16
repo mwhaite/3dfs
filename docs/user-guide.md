@@ -4,7 +4,7 @@ The desktop shell presents a cohesive workflow for browsing managed assets, gene
 
 ## Repository explorer
 
-The repository sidebar lists all containers tracked in the managed library. Use the search bar to filter by name or tag; typing `#tag` applies a tag filter immediately. Context menus expose shortcuts such as opening the container on disk, toggling the sidebar, or navigating linked containers.
+The repository sidebar lists all containers tracked in the managed library. Use the search bar to filter by name or tag; typing `#tag` applies a tag filter immediately. Context menus expose shortcuts such as opening the container on disk, toggling the sidebar, or navigating linked containers. When you select a container, its README renders first—use the **Metadata** tab to inspect high-level fields (printed status, due date, priority, contacts, and links). Click **Edit Metadata** above the component list to update those fields; invalid entries (e.g., malformed dates, missing contact names) are rejected immediately.
 
 Linked containers appear with version metadata when available. Selecting a link focuses the remote container and updates the rest of the UI to match. Use the Back button in the project pane to return to the previous context.
 
@@ -21,7 +21,7 @@ Tabs disable themselves automatically when decoding fails; tooltips capture the 
 
 ## Project workspace
 
-Projects open in a dedicated pane that groups the container’s components, attachments, arrangement scripts, outgoing links, and inbound **Linked Here** references. Containers are flat: every file and link lives at the root of the project directory. Filesystem watchers keep the pane in sync with on-disk changes so new files appear after a short debounce and stale metadata is removed automatically.
+Projects open in a dedicated pane that groups the container’s components, attachments, arrangement scripts, outgoing links, and inbound **Linked Here** references. Containers are flat: every file and link lives at the root of the project directory. Filesystem watchers keep the pane in sync with on-disk changes so new files appear after a short debounce and stale metadata is removed automatically. The header shows color-coded badges summarizing the container’s printed status, priority, and due date to highlight overdue or urgent work.
 
 Use context menus to refresh metadata, import attachments, or open linked containers. Removing a linked component deletes only the metadata reference; the source container on disk remains untouched.
 

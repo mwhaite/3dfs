@@ -31,6 +31,20 @@ Refer to the [manual testing checklist](manual-testing.md) for smoke tests that 
 - Reset the asset catalogue: `scripts/reset_assets_db.py --dry-run`, then rerun without `--dry-run` (optionally add `--yes`).
 - Missing thumbnails after a purge: launch the application and open the affected container; thumbnails regenerate lazily.
 
+## Container metadata
+
+Each container asset stores a structured `container_metadata` block that powers the README and metadata tab. The schema tracks `due_date`, `printed_status` (`not_started`, `in_progress`, `printed`, `deprecated`), `priority` (`low`/`normal`/`high`/`urgent`), free-form `notes`, `contacts[]` (name/role/email/url/notes), and `external_links[]` (label/url/kind/description). Components keep their existing metadata; only the container root owns this block.
+
+When adding or editing a container, populate the block via `three_dfs.container.apply_container_metadata` or the UI’s **Edit Metadata** button (available in the container pane). Invalid ISO dates, contacts without names, or links without URLs are rejected early. Developers can run:
+
+```bash
+hatch run verify-metadata
+# or directly:
+python scripts/migrate_container_metadata.py --dry-run
+```
+
+Include `--db` to point at a specific SQLite file, and `--verbose` if you need per-container logging. CI runs the same `verify-metadata` command (see `.github/workflows/ci.yml`). When metadata changes, regenerate any README “ABOUT” panes and re-run the verification before pushing.
+
 ## Release automation
 
 Packaging is handled by the scripts documented in [Packaging & distribution](packaging.md). The GitHub Actions workflow `.github/workflows/package.yml` drives the same scripts on Ubuntu, macOS, and Windows. Tagging a commit with `v*` triggers the workflow automatically; use the *Build Packages* action to run it manually. When preparing a release:

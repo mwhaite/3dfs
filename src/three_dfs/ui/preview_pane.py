@@ -9,7 +9,7 @@ import math
 import mimetypes
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,7 +30,9 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -46,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..container import is_container_asset
+from ..container_metadata import ContainerMetadata
 from ..customizer import ParameterSchema
 from ..customizer.openscad import OpenSCADBackend
 from ..customizer.pipeline import PipelineResult
@@ -288,6 +291,9 @@ class PreviewPane(QWidget):
         self._current_is_gcode = False
         self._machine_tags: list[str] = []
         self._last_metadata_entries: list[tuple[str, str]] = []
+        self._container_metadata: ContainerMetadata | None = None
+        self._container_created_at: datetime | None = None
+        self._container_label: str | None = None
 
         self._title_label = QLabel("Preview", self)
         self._title_label.setObjectName("previewTitle")
@@ -417,11 +423,17 @@ class PreviewPane(QWidget):
             self._customizer_preview_widget,
             "Render",
         )
+        self._container_metadata_view = _ContainerMetadataView(self)
+        self._container_metadata_tab_index = self._tabs.addTab(
+            self._container_metadata_view,
+            "Metadata",
+        )
         for idx, title in (
             (self._viewer_tab_index, "3D Viewer"),
             (self._text_tab_index, "Text"),
             (self._customizer_tab_index, "Customizer"),
             (self._customizer_preview_tab_index, "Render"),
+            (self._container_metadata_tab_index, "Metadata"),
         ):
             self._hide_tab(idx, reset_title=title)
 
@@ -605,6 +617,9 @@ class PreviewPane(QWidget):
         metadata: Mapping[str, Any] | None = None,
         asset_record: AssetRecord | None = None,
         entry_kind: str | None = None,
+        container_metadata: ContainerMetadata | Mapping[str, Any] | None = None,
+        container_created_at: datetime | None = None,
+        container_label: str | None = None,
     ) -> None:
         logger.info(f"PreviewPane.set_item, asset_record: {asset_record}")
         """Display the asset located at *path* in the preview pane."""
@@ -626,6 +641,14 @@ class PreviewPane(QWidget):
 
         self._asset_record = asset_record
         self._current_entry_kind = entry_kind
+        if isinstance(container_metadata, ContainerMetadata):
+            self._container_metadata = container_metadata
+        elif isinstance(container_metadata, Mapping):
+            self._container_metadata = ContainerMetadata.from_mapping(container_metadata)
+        else:
+            self._container_metadata = None
+        self._container_created_at = container_created_at
+        self._container_label = container_label
         self._asset_metadata = dict(metadata) if metadata else {}
         self._base_metadata = dict(self._asset_metadata)
         if not self._asset_metadata and asset_record is not None:
@@ -1441,6 +1464,7 @@ class PreviewPane(QWidget):
         else:
             self._machine_tags = []
             self._machine_tag_container.setVisible(False)
+        self._update_container_metadata_tab()
         if self._current_absolute_path is not None:
             self._prepare_customizer(Path(self._current_absolute_path))
         if self._viewer_path is not None and self._tabs.currentIndex() == self._viewer_tab_index:
@@ -1480,6 +1504,26 @@ class PreviewPane(QWidget):
 
         if self._current_pixmap is None and not self._tabs.isTabEnabled(self._viewer_tab_index):
             self._tabs.setCurrentIndex(self._text_tab_index)
+
+    def _update_container_metadata_tab(self) -> None:
+        if self._container_metadata is None:
+            self._container_metadata_view.set_metadata(None)
+            self._hide_tab(
+                self._container_metadata_tab_index,
+                reset_title="Metadata",
+            )
+            return
+
+        self._container_metadata_view.set_metadata(
+            self._container_metadata,
+            created_at=self._container_created_at,
+            container_label=self._container_label,
+        )
+        self._show_tab(
+            self._container_metadata_tab_index,
+            title="Metadata",
+            tooltip="Container quick facts, contacts, and external links.",
+        )
 
     @Slot()
     def _capture_current_view(self) -> None:
@@ -2997,3 +3041,162 @@ def _format_size(size: int) -> str:
 def _format_timestamp(timestamp: float) -> str:
     dt = datetime.fromtimestamp(timestamp, tz=UTC).astimezone()
     return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+class _ContainerMetadataView(QWidget):
+    """Rich-text view that renders container-level metadata."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        self._quick_box = QGroupBox("Quick Facts", self)
+        quick_form = QFormLayout()
+        quick_form.setLabelAlignment(Qt.AlignRight)
+        self._container_label_value = QLabel("-")
+        self._created_label = QLabel("Unknown")
+        self._due_label = QLabel("Not set")
+        self._status_label = QLabel("-")
+        self._priority_label = QLabel("-")
+        for label in (
+            self._container_label_value,
+            self._created_label,
+            self._due_label,
+            self._status_label,
+            self._priority_label,
+        ):
+            label.setObjectName("containerMetadataFact")
+        quick_form.addRow("Container:", self._container_label_value)
+        quick_form.addRow("Created:", self._created_label)
+        quick_form.addRow("Due date:", self._due_label)
+        quick_form.addRow("Printed status:", self._status_label)
+        quick_form.addRow("Priority:", self._priority_label)
+        self._quick_box.setLayout(quick_form)
+        layout.addWidget(self._quick_box)
+
+        self._contacts_box = QGroupBox("Contacts", self)
+        contacts_layout = QVBoxLayout(self._contacts_box)
+        self._contacts_label = QLabel("", self._contacts_box)
+        self._contacts_label.setWordWrap(True)
+        self._contacts_label.setTextFormat(Qt.RichText)
+        self._contacts_label.setOpenExternalLinks(True)
+        contacts_layout.addWidget(self._contacts_label)
+        layout.addWidget(self._contacts_box)
+
+        self._links_box = QGroupBox("External links", self)
+        links_layout = QVBoxLayout(self._links_box)
+        self._links_label = QLabel("", self._links_box)
+        self._links_label.setWordWrap(True)
+        self._links_label.setTextFormat(Qt.RichText)
+        self._links_label.setOpenExternalLinks(True)
+        links_layout.addWidget(self._links_label)
+        layout.addWidget(self._links_box)
+
+        self._notes_box = QGroupBox("Notes", self)
+        notes_layout = QVBoxLayout(self._notes_box)
+        self._notes_label = QLabel("", self._notes_box)
+        self._notes_label.setWordWrap(True)
+        self._notes_label.setTextFormat(Qt.RichText)
+        notes_layout.addWidget(self._notes_label)
+        layout.addWidget(self._notes_box)
+
+        layout.addStretch(1)
+        self.set_metadata(None)
+
+    def set_metadata(
+        self,
+        metadata: ContainerMetadata | None,
+        *,
+        created_at: datetime | None = None,
+        container_label: str | None = None,
+    ) -> None:
+        if metadata is None:
+            self._container_label_value.setText("-")
+            self._created_label.setText("Unknown")
+            self._due_label.setText("Not set")
+            self._status_label.setText("-")
+            self._priority_label.setText("-")
+            placeholder = "No container metadata recorded."
+            self._contacts_label.setText(placeholder)
+            self._links_label.setText(placeholder)
+            self._notes_label.setText(placeholder)
+            return
+
+        self._container_label_value.setText(container_label or "-")
+        self._created_label.setText(self._format_datetime(created_at))
+        self._due_label.setText(self._format_date(metadata.due_date))
+        self._status_label.setText(self._format_enum_value(metadata.printed_status.value))
+        self._priority_label.setText(self._format_enum_value(metadata.priority.value))
+        self._contacts_label.setText(self._format_contacts(metadata))
+        self._links_label.setText(self._format_links(metadata))
+        self._notes_label.setText(self._format_notes(metadata.notes))
+
+    @staticmethod
+    def _format_datetime(value: datetime | None) -> str:
+        if value is None:
+            return "Unknown"
+        try:
+            localized = value.astimezone()
+        except Exception:
+            localized = value
+        return localized.strftime("%Y-%m-%d %H:%M")
+
+    @staticmethod
+    def _format_date(value: date | None) -> str:
+        if value is None:
+            return "Not set"
+        return value.isoformat()
+
+    @staticmethod
+    def _format_enum_value(value: str) -> str:
+        return value.replace("_", " ").title()
+
+    @staticmethod
+    def _format_notes(notes: str | None) -> str:
+        if not notes:
+            return "No notes recorded."
+        return html.escape(notes).replace("\n", "<br/>")
+
+    @staticmethod
+    def _format_contacts(metadata: ContainerMetadata) -> str:
+        if not metadata.contacts:
+            return "No contacts recorded."
+        entries: list[str] = []
+        for entry in metadata.contacts:
+            parts = [html.escape(entry.name)]
+            detail_bits: list[str] = []
+            if entry.role:
+                detail_bits.append(html.escape(entry.role))
+            if entry.email:
+                escaped_email = html.escape(entry.email)
+                detail_bits.append(f'<a href="mailto:{escaped_email}">{escaped_email}</a>')
+            if entry.url:
+                escaped_url = html.escape(entry.url)
+                detail_bits.append(f'<a href="{escaped_url}">{escaped_url}</a>')
+            if detail_bits:
+                parts.append(f" – {' · '.join(detail_bits)}")
+            if entry.notes:
+                parts.append(f"<div>{html.escape(entry.notes)}</div>")
+            entries.append("".join(parts))
+        return "<br/>".join(entries)
+
+    @staticmethod
+    def _format_links(metadata: ContainerMetadata) -> str:
+        if not metadata.external_links:
+            return "No external links recorded."
+        entries: list[str] = []
+        for link in metadata.external_links:
+            escaped_label = html.escape(link.label)
+            escaped_url = html.escape(link.url)
+            line = f'<a href="{escaped_url}">{escaped_label}</a>'
+            details: list[str] = []
+            if link.kind:
+                details.append(html.escape(link.kind))
+            if link.description:
+                details.append(html.escape(link.description))
+            if details:
+                line = f"{line} – {' · '.join(details)}"
+            entries.append(line)
+        return "<br/>".join(entries)

@@ -25,6 +25,22 @@ if TYPE_CHECKING:
     from ..storage import ContainerVersionRecord
     from .main_window import MainWindow
 
+    from PySide6.QtWidgets import QMessageBox, QPushButton, QFileDialog
+
+
+DEFAULT_README_CONTENT = """# {name}
+
+## Description
+Enter a description of this container here.
+
+## Contents
+- [ ] Item 1
+- [ ] Item 2
+
+## Notes
+Add any special instructions or notes here.
+"""
+
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +195,7 @@ class ContainerManager:
             should_show = True
 
         if should_show:
+            self._prompt_for_readme(outcome.folder, outcome.asset)
             self._main_window._show_container(outcome.asset)
             if focus_components:
                 try:
@@ -797,6 +814,54 @@ class ContainerManager:
 
         if updated_source is not None:
             self._main_window._current_asset = updated_source
+
+    def _prompt_for_readme(self, container_folder: Path, asset: Any) -> None:
+        """Prompt the user to create a README.md if one is missing."""
+        readme_path = container_folder / "README.md"
+        if readme_path.exists():
+            return
+
+        display_name = asset.metadata.get("display_name") if isinstance(asset.metadata, dict) else asset.label
+        if not display_name:
+            display_name = container_folder.name
+
+        msg = QMessageBox(self._main_window)
+        msg.setWindowTitle("Missing README")
+        msg.setText(f"The container '{display_name}' does not have a README.md file.")
+        msg.setInformativeText("Would you like to add one now?")
+        
+        btn_create = msg.addButton("Create from Template", QMessageBox.ButtonRole.AcceptRole)
+        btn_upload = msg.addButton("Upload Existing...", QMessageBox.ButtonRole.ActionRole)
+        btn_ignore = msg.addButton("Not Now", QMessageBox.ButtonRole.RejectRole)
+        
+        msg.exec_()
+        
+        if msg.clickedButton() == btn_create:
+            try:
+                content = DEFAULT_README_CONTENT.format(name=display_name)
+                readme_path.write_text(content, encoding="utf-8")
+                self._main_window.statusBar().showMessage(f"Created README.md for '{display_name}'", 3000)
+                # Refresh to show the new file
+                self.create_or_update_container(container_folder, show_container=True)
+            except Exception as e:
+                QMessageBox.critical(self._main_window, "Error", f"Failed to create README.md: {e}")
+        
+        elif msg.clickedButton() == btn_upload:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self._main_window, 
+                "Select README File", 
+                str(Path.home()), 
+                "Markdown Files (*.md);;All Files (*)"
+            )
+            if file_path:
+                try:
+                    shutil.copy2(file_path, readme_path)
+                    self._main_window.statusBar().showMessage(f"Uploaded README.md for '{display_name}'", 3000)
+                    # Refresh to show the new file
+                    self.create_or_update_container(container_folder, show_container=True)
+                except Exception as e:
+                    QMessageBox.critical(self._main_window, "Error", f"Failed to upload README.md: {e}")
+
 
         self.create_or_update_container(
             None,

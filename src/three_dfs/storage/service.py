@@ -666,8 +666,13 @@ class AssetService:
         existing = metadata.get("thumbnail")
         if existing != result.info:
             metadata["thumbnail"] = result.info
-            updated = self.update_asset(asset.id, metadata=metadata)
-            return updated, result
+            try:
+                updated = self.update_asset(asset.id, metadata=metadata)
+                return updated, result
+            except KeyError:
+                # Asset no longer exists in the database, return original asset and result
+                logger.warning(f"Asset {asset.id} no longer exists, cannot update thumbnail metadata")
+                return asset, result
 
         return asset, result
 
@@ -727,8 +732,13 @@ class AssetService:
 
         if existing_info != result.info:
             metadata["gcode_preview"] = result.info
-            updated = self.update_asset(asset.id, metadata=metadata)
-            return updated, result
+            try:
+                updated = self.update_asset(asset.id, metadata=metadata)
+                return updated, result
+            except KeyError:
+                # Asset no longer exists in the database, return original asset and result
+                logger.warning(f"Asset {asset.id} no longer exists, cannot update G-code preview metadata")
+                return asset, result
 
         return asset, result
 

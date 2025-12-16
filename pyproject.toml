@@ -27,6 +27,9 @@ dependencies = [
   "SQLAlchemy>=2.0",
   "trimesh>=4.4",
   "requests>=2.31",
+  "networkx>=3.1",
+  "scipy>=1.10",
+  "lxml>=5.2",
 ]
 
 [project.optional-dependencies]
@@ -73,6 +76,7 @@ lint = [
   "black --check src tests",
 ]
 test = "pytest --cov=three_dfs --cov-report=term-missing"
+verify-metadata = "python scripts/migrate_container_metadata.py --dry-run"
 
 [tool.black]
 line-length = 120

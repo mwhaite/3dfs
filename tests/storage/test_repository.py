@@ -6,6 +6,8 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from three_dfs.container import apply_container_metadata, get_container_metadata
+from three_dfs.container_metadata import PrintedStatus, PriorityLevel
 from three_dfs.storage import AssetRepository, AssetService, SQLiteStorage
 
 
@@ -106,6 +108,36 @@ def test_asset_repository_persists_records(tmp_path: Path) -> None:
     search_results = repository.search_tags("alp")
     assert search_results == {"assets/models/ship.fbx": ["alpha"]}
 
+
+def test_asset_repository_round_trips_container_metadata(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "assets.sqlite3")
+    repository = AssetRepository(storage)
+
+    metadata = apply_container_metadata(
+        {"kind": "container"},
+        {"printed_status": "in_progress", "priority": "high", "contacts": [{"name": "Kai"}]},
+    )
+
+    created = repository.create_asset("containers/demo", label="Demo", metadata=metadata)
+
+    fetched = repository.get_asset(created.id)
+    assert fetched is not None
+
+    parsed = get_container_metadata(fetched.metadata)
+    assert parsed.printed_status is PrintedStatus.IN_PROGRESS
+    assert parsed.priority is PriorityLevel.HIGH
+    assert parsed.contacts[0].name == "Kai"
+
+    repository.update_asset(
+        created.id,
+        metadata=apply_container_metadata(fetched.metadata, {"due_date": "2024-06-01", "printed_status": "printed"}),
+    )
+
+    refreshed = repository.get_asset(created.id)
+    assert refreshed is not None
+    parsed_after = get_container_metadata(refreshed.metadata)
+    assert parsed_after.printed_status is PrintedStatus.PRINTED
+    assert parsed_after.due_date.year == 2024
 
 def test_sqlite_storage_migrates_legacy_tag_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.sqlite3"

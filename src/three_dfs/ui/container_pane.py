@@ -4,7 +4,7 @@ import logging
 import mimetypes
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -48,8 +49,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..container import apply_container_metadata, get_container_metadata
 from ..storage import AssetRecord, AssetService, ContainerVersionRecord
 from ..thumbnails import ThumbnailCache, ThumbnailGenerationError
+from .container_metadata_dialog import ContainerMetadataDialog
 from .preview_pane import PreviewPane
 
 logger = logging.getLogger(__name__)
@@ -62,6 +65,18 @@ _PRIMARY_ROLE = Qt.UserRole + 4
 _AUTOMATIC_LINK_COLOR = QColor(236, 72, 153)
 _SECTION_CONTENT_MARGINS = (8, 24, 8, 8)
 _SECTION_SPACING = 6
+_STATUS_COLORS = {
+    "not_started": "#94A3B8",
+    "in_progress": "#F97316",
+    "printed": "#16A34A",
+    "deprecated": "#64748B",
+}
+_PRIORITY_COLORS = {
+    "low": "#22C55E",
+    "normal": "#3B82F6",
+    "high": "#F97316",
+    "urgent": "#DC2626",
+}
 
 
 @dataclass(slots=True)
@@ -133,6 +148,8 @@ class ContainerPane(QWidget):
         self._selected_version_id: int | None = None
         self._versions: list[ContainerVersionRecord] = []
         self._suspend_version_signal = False
+        self._container_metadata = None
+        self._container_created_at: datetime | None = None
 
         self._components = QListWidget(self)
         self._attachments = QListWidget(self)
@@ -229,6 +246,9 @@ class ContainerPane(QWidget):
         self._btn_link_container.clicked.connect(self.linkContainerRequested)
         self._btn_open_folder = QPushButton("Open Folder", self)
         self._btn_open_folder.clicked.connect(self.openFolderRequested)
+        self._btn_edit_metadata = QPushButton("Edit Metadata", self)
+        self._btn_edit_metadata.setToolTip("Edit container-level metadata such as due dates or contacts")
+        self._btn_edit_metadata.clicked.connect(self._edit_container_metadata)
         self._search = QLineEdit(self)
         self._search.setPlaceholderText("Search components and uploads…  (Ctrl+F)")
         self._search.textChanged.connect(self._apply_filter)
@@ -237,6 +257,7 @@ class ContainerPane(QWidget):
         actions_row.addWidget(self._btn_add_attachments)
         actions_row.addWidget(self._btn_link_container)
         actions_row.addWidget(self._btn_open_folder)
+        actions_row.addWidget(self._btn_edit_metadata)
         actions_row.addStretch(1)
         actions_row.addWidget(self._search, 2)
 
@@ -244,6 +265,11 @@ class ContainerPane(QWidget):
         self._title.setObjectName("containerTitle")
         self._path_label = QLabel(self)
         self._path_label.setObjectName("containerPath")
+        self._metadata_summary_label = QLabel(self)
+        self._metadata_summary_label.setObjectName("containerMetadataSummary")
+        self._metadata_summary_label.setWordWrap(True)
+        self._metadata_summary_label.setTextFormat(Qt.RichText)
+        self._metadata_summary_label.setVisible(False)
 
         self._version_selector = QComboBox(self)
         self._version_selector.setObjectName("containerVersionSelector")
@@ -271,6 +297,7 @@ class ContainerPane(QWidget):
         layout.setSpacing(6)
         layout.addWidget(self._title)
         layout.addWidget(self._path_label)
+        layout.addWidget(self._metadata_summary_label)
         layout.addLayout(version_row)
         layout.addWidget(self._version_summary)
         layout.addLayout(actions_row)
@@ -280,6 +307,9 @@ class ContainerPane(QWidget):
         self._current_signature: tuple[Any, ...] | None = None
         # Shortcut to focus search
         QShortcut(QKeySequence("Ctrl+F"), self, activated=self._focus_search)
+
+        # Enable drag and drop for the entire container pane
+        self.setAcceptDrops(True)
 
         self.set_container_versions([], selected_version_id=None)
 
@@ -305,6 +335,7 @@ class ContainerPane(QWidget):
         linked_here: Iterable[ContainerComponent] = (),
         links: Iterable[ContainerComponent] = (),
         version_id: int | None = None,
+        focus_readme: bool = True,
     ) -> None:
         """Populate the pane with data for the container at *path*."""
 
@@ -347,6 +378,8 @@ class ContainerPane(QWidget):
 
         self._update_action_states()
         self._version_summary.setText(self._describe_version_selection())
+        if focus_readme:
+            self._select_default_entry()
 
     def focus_matching_item(self, targets: Iterable[str]) -> None:
         """Select the first list item whose normalized path matches *targets*."""
@@ -595,9 +628,12 @@ class ContainerPane(QWidget):
         self._container_asset_id = container_asset.id
         self._current_container_root = self._coerce_path(container_asset.path)
         self._container_path = container_asset.path
+        self._container_created_at = container_asset.created_at
 
         metadata = container_asset.metadata or {}
         label = metadata.get("display_name") or container_asset.label
+        self._container_metadata = get_container_metadata(metadata)
+        self._update_metadata_summary()
 
         components = [ContainerComponent(**c) for c in metadata.get("components", [])]
         attachments = [ContainerComponent(**a) for a in metadata.get("files", [])]
@@ -613,6 +649,7 @@ class ContainerPane(QWidget):
             links=links,
             linked_here=linked_here,
             version_id=None,
+            focus_readme=previous_selection is None,
         )
 
         if previous_selection:
@@ -622,6 +659,63 @@ class ContainerPane(QWidget):
                     self.select_item(target_path)
                 except Exception:
                     pass
+        if (
+            self._components.currentItem() is None
+            and self._attachments.currentItem() is None
+        ):
+            self._select_default_entry()
+
+    def _remove_metadata_entry(
+        self,
+        entries: list[dict[str, Any]],
+        *,
+        target_asset_id: int | None = None,
+        target_path: Path | str | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """
+        Remove entries from a list based on target_asset_id or target_path.
+
+        Returns a tuple of (updated_entries, removed_flag).
+        """
+        if not entries:
+            return entries, False
+
+        original_count = len(entries)
+
+        # Convert target_path to string for comparison if it's a Path object
+        target_path_str = None
+        if target_path is not None:
+            target_path_str = str(target_path) if not isinstance(target_path, str) else target_path
+
+        # Filter out entries that match the criteria
+        updated_entries = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                updated_entries.append(entry)
+                continue
+
+            # Check if this entry matches the target by asset ID
+            entry_asset_id = self._safe_int(entry.get("asset_id"))
+            if target_asset_id is not None and entry_asset_id == target_asset_id:
+                continue  # Skip this entry (remove it)
+
+            # Check if this entry matches the target by path
+            entry_path = str(entry.get("path") or "")
+            if target_path_str is not None and entry_path == target_path_str:
+                continue  # Skip this entry (remove it)
+
+            # Check alternative path field names too
+            if target_path_str is not None:
+                for path_key in ["relative_path", "absolute_path", "target_path"]:
+                    alt_path = str(entry.get(path_key) or "")
+                    if alt_path == target_path_str:
+                        continue  # Skip this entry (remove it)
+
+            # If we get here, the entry doesn't match the removal criteria
+            updated_entries.append(entry)
+
+        removed = len(updated_entries) < original_count
+        return updated_entries, removed
 
     @Slot()
     def _handle_component_selected(
@@ -654,6 +748,9 @@ class ContainerPane(QWidget):
             metadata=metadata,
             asset_record=None,
             entry_kind=kind,
+            container_metadata=self._container_metadata,
+            container_created_at=self._container_created_at,
+            container_label=self._title.text(),
         )
         # Keep selection visible if filtered
         self._ensure_visible(current)
@@ -763,6 +860,34 @@ class ContainerPane(QWidget):
             tooltip_lines.append(target.strip())
         item.setToolTip("\n".join(dict.fromkeys(tooltip_lines)))
 
+    def _select_default_entry(self) -> None:
+        """Select README if present, otherwise the first available entry."""
+
+        if self._select_readme_in_list(self._components):
+            return
+        if self._select_readme_in_list(self._attachments):
+            return
+        if self._components.count():
+            self._components.setCurrentRow(0)
+            return
+        if self._attachments.count():
+            self._attachments.setCurrentRow(0)
+            return
+        self._preview.clear()
+
+    def _select_readme_in_list(self, list_widget: QListWidget) -> bool:
+        for row in range(list_widget.count()):
+            item = list_widget.item(row)
+            if not (item.flags() & Qt.ItemIsSelectable):
+                continue
+            path_value = str(item.data(Qt.UserRole) or "")
+            label_value = item.text() or ""
+            if _is_readme_filename(path_value) or _is_readme_filename(label_value):
+                list_widget.setCurrentItem(item)
+                list_widget.scrollToItem(item)
+                return True
+        return False
+
     @staticmethod
     def _extract_link_type(metadata: Mapping[str, Any]) -> str | None:
         candidate = metadata.get("link_type")
@@ -778,9 +903,56 @@ class ContainerPane(QWidget):
         self._btn_add_attachments.setEnabled(has_container)
         self._btn_link_container.setEnabled(has_container)
         self._btn_open_folder.setEnabled(has_container)
+        self._btn_edit_metadata.setEnabled(has_container and self._container_asset_id is not None)
         self._version_selector.setEnabled(has_container)
         self._btn_create_version.setEnabled(has_container and self._container_asset_id is not None)
         self._btn_manage_versions.setEnabled(has_container and bool(self._versions))
+        self._update_metadata_summary()
+
+    def _update_metadata_summary(self) -> None:
+        meta = self._container_metadata
+        if meta is None:
+            self._metadata_summary_label.clear()
+            self._metadata_summary_label.setVisible(False)
+            return
+
+        parts: list[str] = []
+        status_key = meta.printed_status.value
+        status_label = status_key.replace("_", " ").title()
+        status_color = _STATUS_COLORS.get(status_key, "#94A3B8")
+        parts.append(self._format_badge("Status", status_label, status_color))
+
+        priority_key = meta.priority.value
+        priority_label = meta.priority.value.title()
+        priority_color = _PRIORITY_COLORS.get(priority_key, "#94A3B8")
+        parts.append(self._format_badge("Priority", priority_label, priority_color))
+
+        if meta.due_date:
+            today = date.today()
+            due_color = "#16A34A"
+            if meta.due_date < today:
+                due_color = "#DC2626"
+            elif meta.due_date == today:
+                due_color = "#F59E0B"
+            parts.append(self._format_badge("Due", meta.due_date.isoformat(), due_color))
+
+        notes = meta.notes or ""
+        if notes:
+            snippet = notes.strip().splitlines()[0]
+            if len(snippet) > 80:
+                snippet = snippet[:77] + "…"
+            parts.append(f"<span>{snippet}</span>")
+
+        self._metadata_summary_label.setText(" ".join(parts))
+        self._metadata_summary_label.setVisible(bool(parts))
+
+    @staticmethod
+    def _format_badge(label: str, value: str, color: str) -> str:
+        text = f"{label}: {value}"
+        return (
+            f'<span style="background-color:{color}; color:#0f172a; '
+            f'padding:2px 6px; border-radius:4px; font-weight:600; margin-right:4px;">{text}</span>'
+        )
 
     def _handle_version_selector_changed(self, index: int) -> None:
         if self._suspend_version_signal:
@@ -870,7 +1042,7 @@ class ContainerPane(QWidget):
         link_import_meta = entry_metadata.get("link_import") if isinstance(entry_metadata, Mapping) else None
         entry_asset_id = self._safe_int(entry_metadata.get("asset_id")) if entry_metadata else None
         link_part_id = self._safe_int(entry_metadata.get("link_part_id")) if entry_metadata else None
-        normalized_path = self._normalized_path_string(path)
+        normalized_path = str(path)
         metadata_key: str | None
         if kind == "linked_here":
             return
@@ -1047,6 +1219,28 @@ class ContainerPane(QWidget):
 
         self.refreshRequested.emit()
 
+    def _edit_container_metadata(self) -> None:
+        if self._asset_service is None or self._container_asset_id is None:
+            return
+        dialog = ContainerMetadataDialog(self._container_metadata, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        new_metadata = dialog.result_metadata()
+        try:
+            asset = self._asset_service.get_asset(self._container_asset_id)
+        except Exception as exc:
+            QMessageBox.warning(self, "Unable to load container metadata", str(exc))
+            return
+        base_metadata = dict((asset.metadata or {}) if asset else {})
+        merged = apply_container_metadata(base_metadata, new_metadata)
+        try:
+            self._asset_service.update_asset(self._container_asset_id, metadata=merged)
+        except Exception as exc:
+            QMessageBox.warning(self, "Unable to update container metadata", str(exc))
+            return
+        self._container_metadata = new_metadata
+        self._update_metadata_summary()
+        self.refreshRequested.emit()
     def _rename_link_item(self, item: QListWidgetItem) -> None:
         metadata = self._item_metadata(item)
         target_container_id = self._safe_int(metadata.get("target_container_id"))
@@ -1690,3 +1884,15 @@ class _IconWorker(QRunnable):
         if c and not c.startswith("image/"):
             return (c.split("/")[-1][:4].upper(), (110, 110, 110))
         return ("", (0, 0, 0))
+
+
+def _is_readme_filename(candidate: str | None) -> bool:
+    """Return True if *candidate* looks like a README file name."""
+
+    if not candidate:
+        return False
+    try:
+        name = Path(str(candidate)).name.casefold()
+    except Exception:
+        return False
+    return name == "readme" or name.startswith("readme.")
