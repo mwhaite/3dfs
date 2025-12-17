@@ -81,3 +81,7 @@ venv.bak/
 .plandex*
 AGENTS.md
 QWEN.md
+
+# Build artifacts
+appimagetool
+squashfs-root/

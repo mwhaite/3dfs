@@ -113,10 +113,7 @@ jobs:
 
       - name: Build Windows bundle
         shell: pwsh
-        run: |
-          python -m cx_Freeze build
-          New-Item -ItemType Directory -Force -Path dist/windows | Out-Null
-          Compress-Archive -Path build/exe.win-amd64-3.11/* -DestinationPath dist/windows/three-dfs-windows.zip -Force
+        run: python scripts/build_windows_dist.py
 
       - name: Archive Windows artifacts
         uses: actions/upload-artifact@v4
