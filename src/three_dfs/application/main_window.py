@@ -28,7 +28,9 @@ from ..ui.bulk_import_dialog import BulkImportDialog
 from ..ui.container_pane import ContainerPane
 from ..ui.delegates import StarDelegate
 from ..ui.preview_pane import PreviewPane
+from ..ui.bulk_import_dialog import BulkImportDialog
 from ..ui.settings_dialog import SettingsDialog
+from ..ui.url_dialog import UrlDialog
 from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
 from ..ui.url_dialog import UrlDialog
