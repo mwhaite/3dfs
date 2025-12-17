@@ -26,6 +26,7 @@ dependencies = [
   "numpy>=1.26",
   "SQLAlchemy>=2.0",
   "trimesh>=4.4",
+  "fast-simplification>=0.1.12",
   "requests>=2.31",
   "networkx>=3.1",
   "scipy>=1.10",
