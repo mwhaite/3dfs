@@ -4,7 +4,7 @@ import logging
 import mimetypes
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -659,10 +659,7 @@ class ContainerPane(QWidget):
                     self.select_item(target_path)
                 except Exception:
                     pass
-        if (
-            self._components.currentItem() is None
-            and self._attachments.currentItem() is None
-        ):
+        if self._components.currentItem() is None and self._attachments.currentItem() is None:
             self._select_default_entry()
 
     def _remove_metadata_entry(
@@ -1241,6 +1238,7 @@ class ContainerPane(QWidget):
         self._container_metadata = new_metadata
         self._update_metadata_summary()
         self.refreshRequested.emit()
+
     def _rename_link_item(self, item: QListWidgetItem) -> None:
         metadata = self._item_metadata(item)
         target_container_id = self._safe_int(metadata.get("target_container_id"))
@@ -1272,8 +1270,7 @@ class ContainerPane(QWidget):
         # We only have the label to distinguish them.
         renamed = False
         for link in links:
-            if (link.get("target_container_id") == target_container_id and
-                link.get("label") == current_label):
+            if link.get("target_container_id") == target_container_id and link.get("label") == current_label:
                 link["label"] = new_label
                 renamed = True
                 break

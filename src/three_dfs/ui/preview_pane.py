@@ -1927,14 +1927,14 @@ class PreviewPane(QWidget):
         """Override setAcceptDrops to enable drag and drop for the preview pane."""
         super().setAcceptDrops(on)
         # Let parent handle drops if we can't handle them directly
-        if hasattr(self, 'parent') and self.parent():
+        if hasattr(self, "parent") and self.parent():
             self.parent().setAcceptDrops(on)
 
     def dragEnterEvent(self, event) -> None:  # type: ignore[override]
         """Handle drag enter events - pass through to parent if this widget doesn't handle them directly."""
         # Get parent container pane
         parent = self.parent()
-        if parent and hasattr(parent, 'dragEnterEvent'):
+        if parent and hasattr(parent, "dragEnterEvent"):
             # Pass the event to the parent
             parent.dragEnterEvent(event)
             if event.isAccepted():
@@ -1945,7 +1945,7 @@ class PreviewPane(QWidget):
         """Handle drag move events - pass through to parent."""
         # Get parent container pane
         parent = self.parent()
-        if parent and hasattr(parent, 'dragMoveEvent'):
+        if parent and hasattr(parent, "dragMoveEvent"):
             # Pass the event to the parent
             parent.dragMoveEvent(event)
             if event.isAccepted():
@@ -1956,7 +1956,7 @@ class PreviewPane(QWidget):
         """Handle drop events - pass through to parent."""
         # Get parent container pane
         parent = self.parent()
-        if parent and hasattr(parent, 'dropEvent'):
+        if parent and hasattr(parent, "dropEvent"):
             # Pass the event to the parent
             parent.dropEvent(event)
             if event.isAccepted():

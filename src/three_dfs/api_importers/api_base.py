@@ -24,6 +24,11 @@ class WebAPIImporter(abc.ABC):
             self.session.headers.update({"Authorization": f"Bearer {self.token}"})
         self.session.headers.update({"User-Agent": "3DFS Web Importer"})
 
+    @abc.abstractmethod
+    def import_container(self, url: str) -> Path:
+        """Import a container from the given URL."""
+        pass
+
     def _make_request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Make an API request to the service."""
         url = urllib.parse.urljoin(self.base_url, endpoint)
@@ -48,6 +53,7 @@ class WebAPIImporter(abc.ABC):
     def _extract_id_from_url(self, url: str, patterns: list[str]) -> str | None:
         """Extract ID from URL using provided patterns."""
         import re
+
         for pattern in patterns:
             match = re.search(pattern, url)
             if match:

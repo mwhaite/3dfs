@@ -59,6 +59,7 @@ class RepositoryListWidget(QListWidget):
             # Check if any of the URLs are directories
             for url in mime_data.urls():
                 import os
+
                 if url.isLocalFile() and os.path.isdir(url.toLocalFile()):
                     event.acceptProposedAction()
                     return
@@ -71,6 +72,7 @@ class RepositoryListWidget(QListWidget):
             # Check if any of the URLs are directories
             for url in mime_data.urls():
                 import os
+
                 if url.isLocalFile() and os.path.isdir(url.toLocalFile()):
                     event.acceptProposedAction()
                     return
@@ -82,7 +84,7 @@ class RepositoryListWidget(QListWidget):
         if mime_data.hasUrls():
             import os
             import shutil
-            from pathlib import Path
+
             from ..config import get_config
 
             # Get the library root to copy files to
@@ -94,7 +96,7 @@ class RepositoryListWidget(QListWidget):
                     folder_path = url.toLocalFile()
                     if os.path.isdir(folder_path):
                         # Import the folder as a container
-                        folder_name = os.path.basename(folder_path.rstrip('/\\'))
+                        folder_name = os.path.basename(folder_path.rstrip("/\\"))
 
                         # Create a new container folder in the library
                         container_path = library_root / folder_name
@@ -103,7 +105,9 @@ class RepositoryListWidget(QListWidget):
                         counter = 1
                         original_container_path = container_path
                         while container_path.exists():
-                            container_path = original_container_path.parent / f"{original_container_path.name}_{counter}"
+                            container_path = (
+                                original_container_path.parent / f"{original_container_path.name}_{counter}"
+                            )
                             counter += 1
                             if counter > 100:  # Prevent infinite loop
                                 break
@@ -114,21 +118,15 @@ class RepositoryListWidget(QListWidget):
 
                             # Create or update the container in the asset service
                             self._main_window._container_manager.create_or_update_container(
-                                container_path,
-                                select_in_repo=True,
-                                show_container=True
+                                container_path, select_in_repo=True, show_container=True
                             )
 
                             self._main_window.statusBar().showMessage(
-                                f"Imported folder '{folder_name}' as container",
-                                4000
+                                f"Imported folder '{folder_name}' as container", 4000
                             )
 
                         except Exception as e:
-                            self._main_window.statusBar().showMessage(
-                                f"Failed to import folder: {str(e)}",
-                                4000
-                            )
+                            self._main_window.statusBar().showMessage(f"Failed to import folder: {str(e)}", 4000)
 
             event.acceptProposedAction()
             return

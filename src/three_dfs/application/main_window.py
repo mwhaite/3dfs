@@ -20,17 +20,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import configure, get_config
 from ..api_importers import ImporterManager
+from ..config import configure, get_config
 from ..search import LibrarySearch
 from ..storage import AssetService
 from ..ui.bulk_import_dialog import BulkImportDialog
 from ..ui.container_pane import ContainerPane
 from ..ui.delegates import StarDelegate
 from ..ui.preview_pane import PreviewPane
-from ..ui.bulk_import_dialog import BulkImportDialog
 from ..ui.settings_dialog import SettingsDialog
-from ..ui.url_dialog import UrlDialog
 from ..ui.tag_graph import TagGraphPane
 from ..ui.tag_sidebar import TagSidebar
 from ..ui.url_dialog import UrlDialog
@@ -282,7 +280,6 @@ class MainWindow(QMainWindow):
         self._undo_action.setEnabled(self._undo_manager.can_undo())
         self._redo_action.setEnabled(self._undo_manager.can_redo())
 
-
     def _open_settings_dialog(self) -> None:
         dialog = SettingsDialog(self._settings, self)
         if dialog.exec() != QDialog.Accepted:
@@ -309,13 +306,15 @@ class MainWindow(QMainWindow):
 
             # Validate URL
             from urllib.parse import urlparse
+
             parsed = urlparse(url)
-            if not parsed.scheme or parsed.scheme not in ('http', 'https'):
+            if not parsed.scheme or parsed.scheme not in ("http", "https"):
                 self.statusBar().showMessage(f"Invalid URL format: {url}", 5000)
                 return
 
             # Create a unique path for the URL asset
             import uuid
+
             unique_id = str(uuid.uuid4())
             url_path = f"urls/{unique_id}"
 
@@ -324,15 +323,11 @@ class MainWindow(QMainWindow):
                 "kind": "url",
                 "url": url,
                 "description": f"Web link to {url}",
-                "created_at": str(datetime.now(UTC).isoformat())
+                "created_at": str(datetime.now(UTC).isoformat()),
             }
 
             # Create the asset record
-            self._asset_service.create_asset(
-                path=url_path,
-                label=label,
-                metadata=metadata
-            )
+            self._asset_service.create_asset(path=url_path, label=label, metadata=metadata)
 
             # Refresh the repository to show the new asset
             self._populate_repository()
@@ -342,16 +337,17 @@ class MainWindow(QMainWindow):
         """Open the given URL in the user's default web browser."""
         # Validate URL format
         from urllib.parse import urlparse
+
         parsed = urlparse(url)
-        if not parsed.scheme or parsed.scheme not in ('http', 'https'):
+        if not parsed.scheme or parsed.scheme not in ("http", "https"):
             # Add default scheme if not provided
-            if url.startswith('//'):
-                url = 'https:' + url
-            elif not url.startswith(('http://', 'https://')):
-                url = 'https://' + url
+            if url.startswith("//"):
+                url = "https:" + url
+            elif not url.startswith(("http://", "https://")):
+                url = "https://" + url
             parsed = urlparse(url)
 
-        if parsed.scheme in ('http', 'https'):
+        if parsed.scheme in ("http", "https"):
             QDesktopServices.openUrl(QUrl(url))
             self.statusBar().showMessage(f"Opening {url} in web browser...", 3000)
         else:

@@ -3,11 +3,11 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 from types import SimpleNamespace
+from typing import Any
 
-import pytest
 import numpy as np
+import pytest
 
 pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 

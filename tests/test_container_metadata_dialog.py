@@ -1,4 +1,3 @@
-from three_dfs.container_metadata import ContactEntry, ExternalLink
 from three_dfs.ui.container_metadata_dialog import (
     _format_contacts,
     _format_links,

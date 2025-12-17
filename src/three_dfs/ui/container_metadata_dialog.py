@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
-from typing import Iterable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..container_metadata import (
-    ContainerMetadata,
     ContactEntry,
+    ContainerMetadata,
     ExternalLink,
     PrintedStatus,
     PriorityLevel,
@@ -144,14 +144,17 @@ class ContainerMetadataDialog(QDialog):
         if errors:
             return None, "\n".join(errors)
 
-        return ContainerMetadata(
-            due_date=due_value,
-            printed_status=printed_status,
-            priority=priority,
-            notes=notes_text or None,
-            contacts=contacts,
-            external_links=links,
-        ), None
+        return (
+            ContainerMetadata(
+                due_date=due_value,
+                printed_status=printed_status,
+                priority=priority,
+                notes=notes_text or None,
+                contacts=contacts,
+                external_links=links,
+            ),
+            None,
+        )
 
 
 def _parse_iso_date(value: str | None) -> date | None:

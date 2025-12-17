@@ -58,11 +58,10 @@ class ThingiverseImporter(Importer):
                 file_path = container_dir / file_name
                 # Need to use the final download URL
                 final_download_url_response = requests.get(
-                    f"{download_url}?access_token={access_token}",
-                    allow_redirects=False
+                    f"{download_url}?access_token={access_token}", allow_redirects=False
                 )
                 final_download_url_response.raise_for_status()
-                final_download_url = final_download_url_response.headers.get('Location')
+                final_download_url = final_download_url_response.headers.get("Location")
 
                 if final_download_url:
                     with requests.get(final_download_url, stream=True) as r:

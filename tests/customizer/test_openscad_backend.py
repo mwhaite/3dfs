@@ -160,9 +160,7 @@ def test_plan_build_reports_render_failures(fixture_path: Path, tmp_path: Path) 
 def test_plan_build_skips_expression_defaults(tmp_path: Path) -> None:
     source = tmp_path / "expression.scad"
     source.write_text(
-        "width = 10;\n"
-        "count = ceil(width / 2);\n"
-        "module demo() { cube([width, width, width]); }\n",
+        "width = 10;\n" "count = ceil(width / 2);\n" "module demo() { cube([width, width, width]); }\n",
         encoding="utf-8",
     )
 
@@ -178,11 +176,7 @@ def test_plan_build_skips_expression_defaults(tmp_path: Path) -> None:
         output_dir=tmp_path / "build",
     )
 
-    overrides = [
-        session.command[index + 1]
-        for index, token in enumerate(session.command)
-        if token == "-D"
-    ]
+    overrides = [session.command[index + 1] for index, token in enumerate(session.command) if token == "-D"]
     assert not any(item.startswith("count=") for item in overrides)
 
     customized_source = Path(session.artifacts[1].path)
@@ -193,9 +187,7 @@ def test_plan_build_skips_expression_defaults(tmp_path: Path) -> None:
 def test_plan_build_handles_missing_expression_flag(tmp_path: Path) -> None:
     source = tmp_path / "legacy_expression.scad"
     source.write_text(
-        "foo = 5;\n"
-        "bar = foo * 2;\n"
-        "cube([foo, bar, foo]);\n",
+        "foo = 5;\n" "bar = foo * 2;\n" "cube([foo, bar, foo]);\n",
         encoding="utf-8",
     )
 
@@ -213,9 +205,5 @@ def test_plan_build_handles_missing_expression_flag(tmp_path: Path) -> None:
         output_dir=tmp_path / "build",
     )
 
-    overrides = [
-        session.command[index + 1]
-        for index, token in enumerate(session.command)
-        if token == "-D"
-    ]
+    overrides = [session.command[index + 1] for index, token in enumerate(session.command) if token == "-D"]
     assert not any(item.startswith("bar=") for item in overrides)

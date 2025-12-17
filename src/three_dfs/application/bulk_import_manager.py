@@ -58,24 +58,16 @@ class BulkImportManager:
 
         # Perform the import based on options
         if one_container_per_model:
-            self._import_one_container_per_model(
-                files_to_import, source_dir, use_path_for_tags, flatten_structure
-            )
+            self._import_one_container_per_model(files_to_import, source_dir, use_path_for_tags, flatten_structure)
         else:  # All files to single container
-            self._import_all_to_single_container(
-                files_to_import, source_dir, use_path_for_tags
-            )
+            self._import_all_to_single_container(files_to_import, source_dir, use_path_for_tags)
 
         self._main_window.statusBar().showMessage(
             f"Bulk import completed: {len(files_to_import)} files imported.", 5000
         )
 
     def _collect_files(
-        self,
-        source_dir: Path,
-        extensions: list[str],
-        include_subdirs: bool,
-        flatten: bool
+        self, source_dir: Path, extensions: list[str], include_subdirs: bool, flatten: bool
     ) -> list[Path]:
         """Collect files to import based on criteria."""
         files = []
@@ -99,11 +91,7 @@ class BulkImportManager:
         return sorted(files)  # Sort for consistent processing order
 
     def _import_one_container_per_model(
-        self,
-        files: list[Path],
-        source_dir: Path,
-        use_path_for_tags: bool,
-        flatten: bool
+        self, files: list[Path], source_dir: Path, use_path_for_tags: bool, flatten: bool
     ) -> None:
         """Import each file as a separate container."""
 

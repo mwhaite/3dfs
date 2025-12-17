@@ -68,4 +68,3 @@ class UrlDialog(QDialog):
         """Return the entered label."""
         text = self._label_input.text().strip()
         return text if text else self._url_input.text().strip()
-

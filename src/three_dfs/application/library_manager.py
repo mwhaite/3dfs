@@ -171,8 +171,7 @@ class LibraryManager:
         if override_tags:
             try:
                 tagged_paths_per_tag = [
-                    set(self._main_window._asset_service.paths_for_tag(tag))
-                    for tag in override_tags
+                    set(self._main_window._asset_service.paths_for_tag(tag)) for tag in override_tags
                 ]
                 tagged_paths = set.intersection(*tagged_paths_per_tag) if tagged_paths_per_tag else set()
             except Exception:

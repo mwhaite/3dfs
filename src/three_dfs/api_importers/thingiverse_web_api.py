@@ -16,9 +16,11 @@ class ThingiverseAPI(WebAPIImporter):
     def __init__(self, token: str | None = None):
         token = token or os.environ.get("THINGIVERSE_TOKEN")
         super().__init__("https://api.thingiverse.com/", token)
-        self.session.headers.update({
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "Accept": "application/json",
+            }
+        )
 
     def get_thing(self, thing_id: str) -> dict[str, Any]:
         """Get details about a specific thing."""
@@ -35,11 +37,7 @@ class ThingiverseAPI(WebAPIImporter):
 
     def extract_thing_id(self, source: str) -> str | None:
         """Extract thing ID from various URL formats."""
-        patterns = [
-            r"thing:(\d+)",
-            r"/things?/(\d+)",
-            r"thingiverse\.com/[^/]+/(\d+)"
-        ]
+        patterns = [r"thing:(\d+)", r"/things?/(\d+)", r"thingiverse\.com/[^/]+/(\d+)"]
         for pattern in patterns:
             match = re.search(pattern, source, re.IGNORECASE)
             if match:

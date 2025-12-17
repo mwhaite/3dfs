@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Test script to verify the importer manager can be instantiated."""
 
+
 def test_importer_manager():
     """Test that the ImporterManager can be imported and instantiated without errors."""
     print("Testing ImporterManager instantiation...")
 
     try:
         from three_dfs.api_importers import ImporterManager
+
         print("✓ Successfully imported ImporterManager")
 
         # Try to instantiate
@@ -34,8 +36,10 @@ def test_importer_manager():
     except Exception as e:
         print(f"✗ Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
         return False
+
 
 if __name__ == "__main__":
     success = test_importer_manager()

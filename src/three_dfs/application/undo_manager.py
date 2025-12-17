@@ -1,4 +1,5 @@
 """Undo/redo stack for 3dfs actions."""
+
 from __future__ import annotations
 
 from collections.abc import Callable

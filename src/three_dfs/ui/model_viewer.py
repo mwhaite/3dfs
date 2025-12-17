@@ -10,10 +10,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QRunnable, QObject, QPoint, Qt, QThreadPool, Signal, Slot, QSettings
+from PySide6.QtCore import QObject, QPoint, QRunnable, QSettings, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QMatrix4x4, QVector3D
 from PySide6.QtOpenGL import (
     QOpenGLBuffer,
@@ -23,19 +22,19 @@ from PySide6.QtOpenGL import (
 )
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
+from ..gcode import GCodePreviewError, analyze_gcode_program
+from ..importer import GCODE_EXTENSIONS, extract_step_metadata
+
 # Maximum number of triangles allowed before decimation is applied
 MAX_TRIANGLES_FOR_PERFORMANCE = 100000  # Configurable maximum for performance
 
 # Quality levels for mesh simplification
 MESH_QUALITY_SETTINGS = {
-    'high': 150000,  # High quality - up to 150k triangles
-    'medium': 100000,  # Medium quality - up to 100k triangles
-    'low': 50000,    # Low quality - up to 50k triangles
-    'very_low': 25000  # Very low quality - up to 25k triangles
+    "high": 150000,  # High quality - up to 150k triangles
+    "medium": 100000,  # Medium quality - up to 100k triangles
+    "low": 50000,  # Low quality - up to 50k triangles
+    "very_low": 25000,  # Very low quality - up to 25k triangles
 }
-
-from ..gcode import GCodePreviewError, analyze_gcode_program
-from ..importer import GCODE_EXTENSIONS, extract_step_metadata
 
 try:  # pragma: no cover - exercised at runtime
     import trimesh  # type: ignore
@@ -331,7 +330,9 @@ def _build_toolpath_arrays(path: Path, *, line_width: float = 0.35) -> tuple[np.
     )
 
 
-def _simplify_mesh_if_needed(vertices: np.ndarray, faces: np.ndarray, max_triangles: int = MAX_TRIANGLES_FOR_PERFORMANCE) -> tuple[np.ndarray, np.ndarray]:
+def _simplify_mesh_if_needed(
+    vertices: np.ndarray, faces: np.ndarray, max_triangles: int = MAX_TRIANGLES_FOR_PERFORMANCE
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Simplify mesh if it exceeds the maximum triangle count.
 
@@ -462,13 +463,13 @@ class _MeshLoaderSignals(QObject):
     """Signals emitted by :class:`MeshLoader`."""
 
     finished = Signal(object)  # Emits the loaded mesh data
-    error = Signal(str)       # Emits error message
+    error = Signal(str)  # Emits error message
 
 
 class MeshLoader(QRunnable):
     """Background task that loads mesh data with quality settings applied."""
 
-    def __init__(self, path: Path, quality: str = 'medium'):
+    def __init__(self, path: Path, quality: str = "medium"):
         super().__init__()
         self._path = path
         self._quality = quality
@@ -478,10 +479,7 @@ class MeshLoader(QRunnable):
         """Perform the mesh loading in a background thread."""
         try:
             # Use the quality-aware loading method
-            mesh, error = _load_mesh_with_quality_internal(
-                self._path,
-                quality=self._quality
-            )
+            mesh, error = _load_mesh_with_quality_internal(self._path, quality=self._quality)
 
             if mesh is not None:
                 self.signals.finished.emit((mesh, None))
@@ -491,7 +489,7 @@ class MeshLoader(QRunnable):
             self.signals.error.emit(str(e))
 
 
-def _load_mesh_with_quality_internal(path: Path, *, quality: str = 'medium') -> tuple[_MeshData | None, str | None]:
+def _load_mesh_with_quality_internal(path: Path, *, quality: str = "medium") -> tuple[_MeshData | None, str | None]:
     """Internal function to load mesh with quality settings - can be used by background threads."""
     if path is None:
         return None, "No model selected."
@@ -554,7 +552,7 @@ def _load_mesh_with_quality_internal(path: Path, *, quality: str = 'medium') -> 
         return None, error_message
 
     # Get max triangles based on quality setting
-    max_triangles = MESH_QUALITY_SETTINGS.get(quality, MESH_QUALITY_SETTINGS['medium'])
+    max_triangles = MESH_QUALITY_SETTINGS.get(quality, MESH_QUALITY_SETTINGS["medium"])
 
     # Simplify complex meshes to improve performance based on quality setting
     vertices, faces = _simplify_mesh_if_needed(vertices, faces, max_triangles=max_triangles)
@@ -608,7 +606,7 @@ class ModelViewer(QOpenGLWidget):
         self._buffers_initialized = False  # Track if we've initialized our buffers
         self._current_mesh_signature = None  # Track mesh to know when it changes
         self._use_buffer_cache = True  # Feature flag for safe disable
-        self._mesh_quality = 'medium'  # Default quality setting (100k triangles)
+        self._mesh_quality = "medium"  # Default quality setting (100k triangles)
         # Background loading
         self._thread_pool = QThreadPool.globalInstance()
         self._current_loader: MeshLoader | None = None
@@ -699,7 +697,7 @@ class ModelViewer(QOpenGLWidget):
         if saved_quality in MESH_QUALITY_SETTINGS:
             self._mesh_quality = saved_quality
         else:
-            self._mesh_quality = 'medium'  # Fallback to default
+            self._mesh_quality = "medium"  # Fallback to default
 
     def save_quality_setting(self) -> None:
         """Save the current quality setting to persistent storage."""
@@ -1097,7 +1095,8 @@ class ModelViewer(QOpenGLWidget):
 
         # If we have access to the original vertices/faces before they were processed by load_mesh_data,
         # we could apply quality settings, but since load_mesh_data includes simplification based on
-        # the default MAX_TRIANGLES_FOR_PERFORMANCE, we'll use the quality setting in the simplification function itself.
+        # the default MAX_TRIANGLES_FOR_PERFORMANCE, we'll use the quality setting in the
+        # simplification function itself.
 
         # For now, let's create a quality-adjusted load by using our own loading approach
         # that respects the quality setting
@@ -1174,7 +1173,7 @@ class ModelViewer(QOpenGLWidget):
             return None, error_message
 
         # Get max triangles based on quality setting
-        max_triangles = MESH_QUALITY_SETTINGS.get(self._mesh_quality, MESH_QUALITY_SETTINGS['medium'])
+        max_triangles = MESH_QUALITY_SETTINGS.get(self._mesh_quality, MESH_QUALITY_SETTINGS["medium"])
 
         # Simplify complex meshes to improve performance based on quality setting
         vertices, faces = _simplify_mesh_if_needed(vertices, faces, max_triangles=max_triangles)

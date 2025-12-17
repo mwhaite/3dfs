@@ -20,12 +20,10 @@ from ..importer import SUPPORTED_EXTENSIONS
 from .container_scanner import ContainerRefreshRequest, ContainerScanOutcome, ContainerScanWorker
 
 if TYPE_CHECKING:
-    from PySide6.QtWidgets import QListWidgetItem
+    from PySide6.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox
 
     from ..storage import ContainerVersionRecord
     from .main_window import MainWindow
-
-    from PySide6.QtWidgets import QMessageBox, QPushButton, QFileDialog
 
 
 DEFAULT_README_CONTENT = """# {name}
@@ -829,13 +827,13 @@ class ContainerManager:
         msg.setWindowTitle("Missing README")
         msg.setText(f"The container '{display_name}' does not have a README.md file.")
         msg.setInformativeText("Would you like to add one now?")
-        
+
         btn_create = msg.addButton("Create from Template", QMessageBox.ButtonRole.AcceptRole)
         btn_upload = msg.addButton("Upload Existing...", QMessageBox.ButtonRole.ActionRole)
-        btn_ignore = msg.addButton("Not Now", QMessageBox.ButtonRole.RejectRole)
-        
+        msg.addButton("Not Now", QMessageBox.ButtonRole.RejectRole)
+
         msg.exec_()
-        
+
         if msg.clickedButton() == btn_create:
             try:
                 content = DEFAULT_README_CONTENT.format(name=display_name)
@@ -845,13 +843,10 @@ class ContainerManager:
                 self.create_or_update_container(container_folder, show_container=True)
             except Exception as e:
                 QMessageBox.critical(self._main_window, "Error", f"Failed to create README.md: {e}")
-        
+
         elif msg.clickedButton() == btn_upload:
             file_path, _ = QFileDialog.getOpenFileName(
-                self._main_window, 
-                "Select README File", 
-                str(Path.home()), 
-                "Markdown Files (*.md);;All Files (*)"
+                self._main_window, "Select README File", str(Path.home()), "Markdown Files (*.md);;All Files (*)"
             )
             if file_path:
                 try:
@@ -861,28 +856,6 @@ class ContainerManager:
                     self.create_or_update_container(container_folder, show_container=True)
                 except Exception as e:
                     QMessageBox.critical(self._main_window, "Error", f"Failed to upload README.md: {e}")
-
-
-        self.create_or_update_container(
-            None,
-            show_container=True,
-            select_in_repo=True,
-            focus_component=str(target_folder),
-            display_name=(
-                updated_source.metadata.get("display_name") if isinstance(updated_source.metadata, dict) else None
-            ),
-        )
-
-        if selected_version is not None:
-            version_suffix = f" (version '{selected_version.name}')"
-        elif version_records:
-            version_suffix = " (working copy)"
-        else:
-            version_suffix = ""
-        self._main_window.statusBar().showMessage(
-            f"Linked container '{alias_source}'{version_suffix}.",
-            4000,
-        )
 
     def import_component_from_linked_container(self) -> None:
         from PySide6.QtWidgets import QDialog, QMessageBox

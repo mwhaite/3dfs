@@ -139,6 +139,7 @@ def test_asset_repository_round_trips_container_metadata(tmp_path: Path) -> None
     assert parsed_after.printed_status is PrintedStatus.PRINTED
     assert parsed_after.due_date.year == 2024
 
+
 def test_sqlite_storage_migrates_legacy_tag_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.sqlite3"
     now = datetime.now(UTC).isoformat()
