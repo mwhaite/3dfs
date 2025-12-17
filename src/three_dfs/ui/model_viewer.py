@@ -422,6 +422,11 @@ class ModelViewer(QOpenGLWidget):
         self._pan_x = 0.0
         self._pan_y = 0.0
         self._last_error_message: str | None = None
+        self._vao: QOpenGLVertexArrayObject | None = None
+        self._vbo: QOpenGLBuffer | None = None
+        self._ebo: QOpenGLBuffer | None = None
+        self._draw_mode: str | None = None
+        self._draw_count: int = 0
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -450,6 +455,7 @@ class ModelViewer(QOpenGLWidget):
         self._pan_y = 0.0
         self._user_modified = False
         self._auto_fit_applied = False
+        self._release_buffers()
         self.update()
 
     # ------------------------------------------------------------------
@@ -487,6 +493,124 @@ class ModelViewer(QOpenGLWidget):
         self.funcs.glEnable(self._GL_DEPTH_TEST)
         self.funcs.glEnable(self._GL_CULL_FACE)
 
+    def _release_buffers(self) -> None:
+        """Dispose of any existing GL buffers/arrays."""
+
+        if self._ebo is not None:
+            try:
+                self._ebo.destroy()
+            except Exception:
+                pass
+            self._ebo = None
+
+        if self._vbo is not None:
+            try:
+                self._vbo.destroy()
+            except Exception:
+                pass
+            self._vbo = None
+
+        if self._vao is not None:
+            try:
+                self._vao.destroy()
+            except Exception:
+                pass
+            self._vao = None
+
+        self._draw_mode = None
+        self._draw_count = 0
+
+    def _ensure_mesh_buffers(self) -> bool:
+        """Upload mesh data to GPU buffers once and reuse each frame."""
+
+        if self._mesh is None or self._program is None:
+            return False
+
+        if (
+            self._vao is not None
+            and self._vbo is not None
+            and (self._ebo is not None or self._draw_mode == "arrays")
+        ):
+            return True
+
+        self._release_buffers()
+
+        vertices = self._mesh.vertices.astype(np.float32)
+        normals = self._mesh.normals.astype(np.float32)
+        indices = self._mesh.indices.astype(np.uint32)
+
+        interleaved = np.hstack([vertices, normals]).astype(np.float32)
+        stride = interleaved.shape[1] * 4
+
+        self._vao = QOpenGLVertexArrayObject(self)
+        self._vao.create()
+        self._vao.bind()
+
+        self._vbo = QOpenGLBuffer(QOpenGLBuffer.VertexBuffer)
+        self._vbo.create()
+        self._vbo.bind()
+        self._vbo.allocate(interleaved.tobytes(), interleaved.nbytes)
+
+        pos_loc = 0
+        nrm_loc = 1
+        self._program.enableAttributeArray(pos_loc)
+        self._program.setAttributeBuffer(
+            pos_loc,
+            self._GL_FLOAT,
+            0,
+            3,
+            stride,
+        )
+        self._program.enableAttributeArray(nrm_loc)
+        self._program.setAttributeBuffer(
+            nrm_loc,
+            self._GL_FLOAT,
+            12,
+            3,
+            stride,
+        )
+
+        # Prefer indexed drawing when available; fallback to non-indexed data when
+        # glDrawElements cannot be used.
+        if self.extra is not None:
+            self._ebo = QOpenGLBuffer(QOpenGLBuffer.IndexBuffer)
+            self._ebo.create()
+            self._ebo.bind()
+            self._ebo.allocate(indices.tobytes(), indices.nbytes)
+            self._draw_mode = "elements"
+            self._draw_count = int(indices.size)
+        else:
+            tri_indices = indices.reshape(-1)
+            flat_interleaved = np.hstack([vertices[tri_indices], normals[tri_indices]]).astype(
+                np.float32
+            )
+            flat_stride = flat_interleaved.shape[1] * 4
+            self._vbo.bind()
+            self._vbo.allocate(flat_interleaved.tobytes(), flat_interleaved.nbytes)
+            self._program.setAttributeBuffer(
+                pos_loc,
+                self._GL_FLOAT,
+                0,
+                3,
+                flat_stride,
+            )
+            self._program.setAttributeBuffer(
+                nrm_loc,
+                self._GL_FLOAT,
+                12,
+                3,
+                flat_stride,
+            )
+            self._draw_mode = "arrays"
+            self._draw_count = int(tri_indices.shape[0])
+
+        self._vao.release()
+        self._vbo.release()
+        if self._ebo is not None:
+            self._ebo.release()
+
+        return True
+
     def resizeGL(self, w: int, h: int) -> None:  # pragma: no cover
         del w, h
         if self._mesh is not None and not self._user_modified:
@@ -512,99 +636,25 @@ class ModelViewer(QOpenGLWidget):
         if ambient_loc != -1:
             self._program.setUniformValue(ambient_loc, 0.55)
 
-        # Upload buffers on each paint for simplicity (small meshes typical)
-        vertices = self._mesh.vertices.astype(np.float32)
-        normals = self._mesh.normals.astype(np.float32)
-        indices = self._mesh.indices.astype(np.uint32)
+        if not self._ensure_mesh_buffers():
+            self._program.release()
+            return
 
-        # Interleave position and normal
-        interleaved = np.hstack([vertices, normals]).astype(np.float32)
-        stride = interleaved.shape[1] * 4
+        if self._vao is not None:
+            self._vao.bind()
 
-        vao = QOpenGLVertexArrayObject(self)
-        vao.create()
-        vao.bind()
-
-        # VBO with interleaved positions and normals
-        vbo = QOpenGLBuffer(QOpenGLBuffer.VertexBuffer)
-        vbo.create()
-        vbo.bind()
-        vbo.allocate(interleaved.tobytes(), interleaved.nbytes)
-
-        # EBO for indices
-        ebo = QOpenGLBuffer(QOpenGLBuffer.IndexBuffer)
-        ebo.create()
-        ebo.bind()
-        ebo.allocate(indices.tobytes(), indices.nbytes)
-
-        # Attributes
-        pos_loc = 0
-        nrm_loc = 1
-        self._program.enableAttributeArray(pos_loc)
-        self._program.setAttributeBuffer(
-            pos_loc,
-            self._GL_FLOAT,
-            0,
-            3,
-            stride,
-        )
-        self._program.enableAttributeArray(nrm_loc)
-        self._program.setAttributeBuffer(
-            nrm_loc,
-            self._GL_FLOAT,
-            12,
-            3,
-            stride,
-        )
-
-        # Draw indexed geometry via extra functions when available
-        count = int(indices.size)
-        drew = False
-        if self.extra is not None:
-            try:
-                self.extra.glDrawElements(
-                    self._GL_TRIANGLES,
-                    count,
-                    self._GL_UNSIGNED_INT,
-                    0,
-                )
-                drew = True
-            except Exception:
-                drew = False
-        if not drew:
-            # Fallback: map to non-indexed draw without leaving a broken state
-            tri_indices = indices.reshape(-1)
-            flat_count = int(tri_indices.shape[0])
-            # Reuse the same VBO by reallocating flat data
-            flat_interleaved = np.hstack([vertices[tri_indices], normals[tri_indices]]).astype(np.float32)
-            vbo.bind()
-            vbo.allocate(flat_interleaved.tobytes(), flat_interleaved.nbytes)
-            flat_stride = flat_interleaved.shape[1] * 4
-            self._program.setAttributeBuffer(
-                pos_loc,
-                self._GL_FLOAT,
+        if self._draw_mode == "elements" and self._draw_count > 0:
+            self.funcs.glDrawElements(
+                self._GL_TRIANGLES,
+                self._draw_count,
+                self._GL_UNSIGNED_INT,
                 0,
-                3,
-                flat_stride,
             )
-            self._program.setAttributeBuffer(
-                nrm_loc,
-                self._GL_FLOAT,
-                12,
-                3,
-                flat_stride,
-            )
-            self.funcs.glDrawArrays(self._GL_TRIANGLES, 0, flat_count)
+        elif self._draw_mode == "arrays" and self._draw_count > 0:
+            self.funcs.glDrawArrays(self._GL_TRIANGLES, 0, self._draw_count)
 
-        # Cleanup
-        self._program.disableAttributeArray(pos_loc)
-        self._program.disableAttributeArray(nrm_loc)
-        ebo.release()
-        ebo.destroy()
-        vbo.release()
-        vbo.destroy()
-        vao.release()
-        vao.destroy()
+        if self._vao is not None:
+            self._vao.release()
 
         self._program.release()
 
@@ -693,6 +743,7 @@ class ModelViewer(QOpenGLWidget):
         return True, None
 
     def set_mesh_data(self, mesh: _MeshData, path: Path | None = None) -> None:
+        self._release_buffers()
         self._mesh = mesh
         self._path = path
         self._yaw = 0.0
