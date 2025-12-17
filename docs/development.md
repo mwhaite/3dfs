@@ -14,7 +14,27 @@ This guide summarises the day-to-day tooling used by contributors. Refer back to
 | Build wheel/sdist | `hatch build` |
 
 Keep feature branches scoped to a single change set (for example `feature/import-sketchfab`) and prefer imperative commit messages such as “Add plugin registry tests”.
+## Code Quality Automation
 
+The project uses automated checks to maintain code quality:
+
+- **Pre-push hook**: Automatically runs `hatch run lint` before each push to prevent pushing code with linting issues
+- **Pre-commit hooks** (optional): For even stricter control, install [pre-commit](https://pre-commit.com/) and run `pre-commit install` to enable checks on every commit
+- **CI/CD**: GitHub Actions runs linting and tests on all pushes to `main` and pull requests
+
+To set up pre-commit hooks (recommended for active development):
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+This will run linting and formatting checks before each commit. You can also run checks manually:
+
+```bash
+pre-commit run --all-files  # Check all files
+pre-commit run ruff --all-files  # Run only ruff checks
+```
 ## Testing strategy
 
 Tests live under `tests/` and generally mirror the layout of `src/three_dfs/`. Use `pytest` fixtures from `tests/conftest.py` to share setup logic, and place binary fixtures under `tests/fixtures/`. Maintain deterministic behaviour—avoid network calls or machine-specific paths. When a failure is isolated to one module, run a focused subset, e.g.:
