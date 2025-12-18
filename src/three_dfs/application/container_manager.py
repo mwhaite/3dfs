@@ -20,10 +20,24 @@ from ..importer import SUPPORTED_EXTENSIONS
 from .container_scanner import ContainerRefreshRequest, ContainerScanOutcome, ContainerScanWorker
 
 if TYPE_CHECKING:
-    from PySide6.QtWidgets import QListWidgetItem
+    from PySide6.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox
 
     from ..storage import ContainerVersionRecord
     from .main_window import MainWindow
+
+
+DEFAULT_README_CONTENT = """# {name}
+
+## Description
+Enter a description of this container here.
+
+## Contents
+- [ ] Item 1
+- [ ] Item 2
+
+## Notes
+Add any special instructions or notes here.
+"""
 
 
 logger = logging.getLogger(__name__)
@@ -179,6 +193,7 @@ class ContainerManager:
             should_show = True
 
         if should_show:
+            self._prompt_for_readme(outcome.folder, outcome.asset)
             self._main_window._show_container(outcome.asset)
             if focus_components:
                 try:
@@ -798,26 +813,49 @@ class ContainerManager:
         if updated_source is not None:
             self._main_window._current_asset = updated_source
 
-        self.create_or_update_container(
-            None,
-            show_container=True,
-            select_in_repo=True,
-            focus_component=str(target_folder),
-            display_name=(
-                updated_source.metadata.get("display_name") if isinstance(updated_source.metadata, dict) else None
-            ),
-        )
+    def _prompt_for_readme(self, container_folder: Path, asset: Any) -> None:
+        """Prompt the user to create a README.md if one is missing."""
+        readme_path = container_folder / "README.md"
+        if readme_path.exists():
+            return
 
-        if selected_version is not None:
-            version_suffix = f" (version '{selected_version.name}')"
-        elif version_records:
-            version_suffix = " (working copy)"
-        else:
-            version_suffix = ""
-        self._main_window.statusBar().showMessage(
-            f"Linked container '{alias_source}'{version_suffix}.",
-            4000,
-        )
+        display_name = asset.metadata.get("display_name") if isinstance(asset.metadata, dict) else asset.label
+        if not display_name:
+            display_name = container_folder.name
+
+        msg = QMessageBox(self._main_window)
+        msg.setWindowTitle("Missing README")
+        msg.setText(f"The container '{display_name}' does not have a README.md file.")
+        msg.setInformativeText("Would you like to add one now?")
+
+        btn_create = msg.addButton("Create from Template", QMessageBox.ButtonRole.AcceptRole)
+        btn_upload = msg.addButton("Upload Existing...", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton("Not Now", QMessageBox.ButtonRole.RejectRole)
+
+        msg.exec_()
+
+        if msg.clickedButton() == btn_create:
+            try:
+                content = DEFAULT_README_CONTENT.format(name=display_name)
+                readme_path.write_text(content, encoding="utf-8")
+                self._main_window.statusBar().showMessage(f"Created README.md for '{display_name}'", 3000)
+                # Refresh to show the new file
+                self.create_or_update_container(container_folder, show_container=True)
+            except Exception as e:
+                QMessageBox.critical(self._main_window, "Error", f"Failed to create README.md: {e}")
+
+        elif msg.clickedButton() == btn_upload:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self._main_window, "Select README File", str(Path.home()), "Markdown Files (*.md);;All Files (*)"
+            )
+            if file_path:
+                try:
+                    shutil.copy2(file_path, readme_path)
+                    self._main_window.statusBar().showMessage(f"Uploaded README.md for '{display_name}'", 3000)
+                    # Refresh to show the new file
+                    self.create_or_update_container(container_folder, show_container=True)
+                except Exception as e:
+                    QMessageBox.critical(self._main_window, "Error", f"Failed to upload README.md: {e}")
 
     def import_component_from_linked_container(self) -> None:
         from PySide6.QtWidgets import QDialog, QMessageBox

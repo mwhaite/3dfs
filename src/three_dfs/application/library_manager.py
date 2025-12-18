@@ -91,7 +91,7 @@ class LibraryManager:
 
         valid_assets = 0
         root_resolved = library_root.expanduser().resolve()
-        for asset, metadata in assets:
+        for asset, _metadata in assets:
             # DEBUG: Log the raw asset path to find the source of corruption
             logger.debug(
                 "Processing asset: id=%s, path=%r, path_type=%s, path_len=%d",
@@ -170,7 +170,9 @@ class LibraryManager:
         tag_ids: set[int] | None = None
         if override_tags:
             try:
-                tagged_paths_per_tag = [set(self._main_window._asset_service.paths_for_tag(tag)) for tag in override_tags]
+                tagged_paths_per_tag = [
+                    set(self._main_window._asset_service.paths_for_tag(tag)) for tag in override_tags
+                ]
                 tagged_paths = set.intersection(*tagged_paths_per_tag) if tagged_paths_per_tag else set()
             except Exception:
                 tagged_paths = set()
@@ -205,7 +207,7 @@ class LibraryManager:
             raw_path = item.data(Qt.UserRole + 1) or item.text()
             path = str(raw_path) if raw_path is not None else ""
             label = item.text()
-            
+
             visible = True
             if search_paths is not None and path not in search_paths:
                 visible = False
@@ -222,7 +224,7 @@ class LibraryManager:
                     candidate_id = None
                 if candidate_id not in tag_ids:
                     visible = False
-            
+
             item.setHidden(not visible)
 
     def run_library_search(self, query: str) -> set[str] | None:
@@ -232,7 +234,7 @@ class LibraryManager:
         try:
             terms = query.split()
             hits_per_term = [self._main_window._library_search.search(term) for term in terms]
-            
+
             if not hits_per_term:
                 return set()
 

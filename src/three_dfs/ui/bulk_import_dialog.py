@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
@@ -144,6 +143,7 @@ class BulkImportDialog(QDialog):
 
 if __name__ == "__main__":
     import sys
+
     from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)

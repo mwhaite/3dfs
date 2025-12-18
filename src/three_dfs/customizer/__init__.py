@@ -34,6 +34,7 @@ class ParameterDescriptor:
     maximum: float | None = None
     step: float | None = None
     choices: tuple[Any, ...] = ()
+    raw_expression: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable representation of the descriptor."""
@@ -47,6 +48,7 @@ class ParameterDescriptor:
             "maximum": self.maximum,
             "step": self.step,
             "choices": list(self.choices),
+            "raw_expression": self.raw_expression,
         }
 
     @classmethod
@@ -62,6 +64,7 @@ class ParameterDescriptor:
             maximum=data.get("maximum"),
             step=data.get("step"),
             choices=tuple(data.get("choices") or ()),
+            raw_expression=bool(data.get("raw_expression", False)),
         )
 
 

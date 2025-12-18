@@ -20,8 +20,8 @@ class MyMiniFactoryImporter(Importer):
         access_token = settings.myminifactory_token
         if not access_token:
             raise ValueError(
-                "MYMINIFACTORY_TOKEN not set in settings. Please obtain a token from the "
-                "MyMiniFactory Developer Console and set it in the settings."
+                "MYMINIFACTORY_TOKEN not set in settings. "
+                "Please obtain a token from the MyMiniFactory Developer Console and set it in the settings."
             )
 
         match = re.search(r"object/([\w-]+)-(\d+)", url)

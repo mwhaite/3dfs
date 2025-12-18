@@ -3,8 +3,10 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
 pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
@@ -25,6 +27,7 @@ from three_dfs.ui.customizer_panel import (
     BooleanParameterWidget,
     ChoiceParameterWidget,
     CustomizerPanel,
+    CustomizerPreviewWidget,
     NumberParameterWidget,
     RangeParameterWidget,
 )
@@ -92,6 +95,88 @@ def test_customizer_panel_renders_schema(qapp):
     reset_values = panel.parameter_values()
     assert reset_values["segments"] == 12
     assert reset_values["material"] == "plastic"
+
+
+def test_render_preview_runs_backend(qapp, tmp_path, monkeypatch):
+    schema = ParameterSchema(
+        parameters=(ParameterDescriptor(name="length", kind="number", default=5),),
+        metadata={"backend": "dummy"},
+    )
+
+    called: dict[str, Any] = {}
+
+    class PreviewBackend(CustomizerBackend):
+        name = "preview"
+
+        def load_schema(self, source: Path) -> ParameterSchema:  # pragma: no cover - unused
+            return schema
+
+        def validate(self, schema: ParameterSchema, values: Mapping[str, Any]) -> dict[str, Any]:
+            return {"length": float(values.get("length", 5))}
+
+        def plan_build(  # type: ignore[override]
+            self,
+            source: Path,
+            schema: ParameterSchema,
+            values: Mapping[str, Any],
+            *,
+            output_dir: Path,
+            asset_service=None,
+            execute: bool = False,
+            metadata=None,
+        ) -> CustomizerSession:
+            nonlocal called
+            called = {
+                "execute": execute,
+                "values": dict(values),
+                "source": source,
+            }
+            mesh_path = output_dir / "preview.stl"
+            mesh_path.write_text("solid preview\nendsolid preview\n", encoding="utf-8")
+            artifact = GeneratedArtifact(
+                path=str(mesh_path),
+                label=mesh_path.name,
+                relationship="output",
+                content_type="model/stl",
+            )
+            return CustomizerSession(
+                base_asset_path=str(source),
+                schema=schema,
+                parameters=dict(values),
+                command=("preview",),
+                artifacts=(artifact,),
+            )
+
+    backend = PreviewBackend()
+    source = tmp_path / "preview.scad"
+    source.write_text("length = 5;", encoding="utf-8")
+
+    panel = CustomizerPanel()
+    preview_widget = CustomizerPreviewWidget()
+    panel.set_preview_widget(preview_widget)
+    preview_signals: list[bool] = []
+    panel.previewUpdated.connect(lambda: preview_signals.append(True))
+    panel.set_session(backend=backend, schema=schema, source_path=source, base_asset=None)
+
+    mesh_stub = SimpleNamespace(
+        vertices=np.zeros((3, 3), dtype=np.float32),
+        normals=np.zeros((3, 3), dtype=np.float32),
+        indices=np.array([0, 1, 2], dtype=np.uint32),
+        center=np.zeros(3, dtype=np.float32),
+        radius=1.0,
+    )
+    monkeypatch.setattr("three_dfs.ui.customizer_panel.load_mesh_data", lambda path: (mesh_stub, None))
+
+    panel._handle_preview()
+    qapp.processEvents()
+
+    assert called["execute"] is True
+    assert preview_widget.has_preview() is True
+    assert preview_widget.preview_parameters() == {"length": 5.0}
+    assert preview_signals
+
+    panel.deleteLater()
+    preview_widget.deleteLater()
 
 
 def test_customizer_dialog_configures_panel(qapp, tmp_path):

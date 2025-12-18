@@ -20,8 +20,8 @@ class ThingiverseImporter(Importer):
         access_token = settings.thingiverse_token
         if not access_token:
             raise ValueError(
-                "THINGIVERSE_TOKEN not set in settings. Please obtain a token from the "
-                "Thingiverse Developer Console and set it in the settings."
+                "THINGIVERSE_TOKEN not set in settings. "
+                "Please obtain a token from the Thingiverse Developer Console and set it in the settings."
             )
 
         match = re.search(r"thing:(\d+)", url)

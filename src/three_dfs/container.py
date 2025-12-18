@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
     from .storage.repository import AssetRecord
 
+from .container_metadata import ContainerMetadata, parse_container_metadata
+
 __all__ = [
     "discover_arrangement_scripts",
     "build_arrangement_metadata",
@@ -20,12 +22,16 @@ __all__ = [
     "build_component_metadata",
     "build_linked_component_entry",
     "build_placeholder_metadata",
+    "CONTAINER_METADATA_KEY",
+    "get_container_metadata",
+    "apply_container_metadata",
     "is_container_metadata",
     "is_container_asset",
 ]
 
 ARRANGEMENT_DIR_NAMES: tuple[str, ...] = ("arrangements", "_arrangements")
 ARRANGEMENT_NAME_HINTS: tuple[str, ...] = ("arrangement", "arrange", "layout")
+CONTAINER_METADATA_KEY = "container_metadata"
 
 _UPSTREAM_KEYS: tuple[tuple[str, str], ...] = (
     ("source_url", "Source"),
@@ -226,6 +232,51 @@ def build_placeholder_metadata(path: Path, *, container_root: Path) -> dict[str,
     }
     metadata["related_items"] = _merge_related_items(None, container_root)
     return metadata
+
+
+def get_container_metadata(source: AssetRecord | Mapping[str, Any] | None) -> ContainerMetadata:
+    """Return structured metadata for *source*."""
+
+    if source is None:
+        return parse_container_metadata(None)
+    if isinstance(source, Mapping):
+        if CONTAINER_METADATA_KEY in source:
+            payload = source.get(CONTAINER_METADATA_KEY)
+            if isinstance(payload, Mapping):
+                return parse_container_metadata(payload)
+        if _looks_like_container_metadata(source):
+            return parse_container_metadata(source)
+        return parse_container_metadata(None)
+    metadata = getattr(source, "metadata", None)
+    if isinstance(metadata, Mapping):
+        payload = metadata.get(CONTAINER_METADATA_KEY)
+        if isinstance(payload, Mapping):
+            return parse_container_metadata(payload)
+        if _looks_like_container_metadata(metadata):
+            return parse_container_metadata(metadata)
+    return parse_container_metadata(None)
+
+
+def apply_container_metadata(
+    base_metadata: Mapping[str, Any] | None,
+    container_metadata: ContainerMetadata | Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Return a metadata dictionary embedding *container_metadata*."""
+
+    merged = dict(base_metadata or {})
+    if isinstance(container_metadata, ContainerMetadata):
+        payload = container_metadata.to_dict()
+    elif isinstance(container_metadata, Mapping):
+        payload = ContainerMetadata.from_mapping(container_metadata).to_dict()
+    else:
+        payload = ContainerMetadata().to_dict()
+    merged[CONTAINER_METADATA_KEY] = payload
+    return merged
+
+
+def _looks_like_container_metadata(payload: Mapping[str, Any]) -> bool:
+    keys = {"printed_status", "priority", "contacts", "external_links", "due_date", "notes"}
+    return any(key in payload for key in keys)
 
 
 def discover_arrangement_scripts(

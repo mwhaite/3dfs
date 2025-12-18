@@ -16,7 +16,7 @@ class StarDelegate(QStyledItemDelegate):
         super().paint(painter, option, index)
 
         # Get the data
-        tags = index.data(Qt.UserRole + 2) # Using UserRole+2 for the tag list
+        tags = index.data(Qt.UserRole + 2)  # Using UserRole+2 for the tag list
 
         # Define rectangles
         rect = option.rect

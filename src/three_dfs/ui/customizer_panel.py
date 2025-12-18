@@ -43,6 +43,7 @@ from .model_viewer import ModelViewer, _MeshData, load_mesh_data
 __all__ = [
     "BooleanParameterWidget",
     "ChoiceParameterWidget",
+    "CustomizerPreviewWidget",
     "CustomizerPanel",
     "NumberParameterWidget",
     "RangeParameterWidget",
@@ -51,6 +52,84 @@ __all__ = [
 
 
 logger = logging.getLogger(__name__)
+
+
+class CustomizerPreviewWidget(QWidget):
+    """Display area for customizer render previews."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self._title = QLabel("Render", self)
+        self._title.setObjectName("customizerPreviewTitle")
+        layout.addWidget(self._title)
+
+        self._stack_widget = QWidget(self)
+        self._stack = QStackedLayout(self._stack_widget)
+        self._message_label = QLabel("Render the customised model to view it here.", self._stack_widget)
+        self._message_label.setAlignment(Qt.AlignCenter)
+        self._message_label.setWordWrap(True)
+        self._stack.addWidget(self._message_label)
+
+        self._viewer = ModelViewer(self._stack_widget)
+        self._viewer.setMinimumHeight(200)
+        self._stack.addWidget(self._viewer)
+        layout.addWidget(self._stack_widget, 1)
+
+        self._preview_mesh: _MeshData | None = None
+        self._preview_parameters: dict[str, Any] | None = None
+
+    # ------------------------------------------------------------------
+    # Preview state helpers
+    # ------------------------------------------------------------------
+    def clear(self) -> None:
+        """Reset the preview content to its default message."""
+
+        self._preview_mesh = None
+        self._preview_parameters = None
+        self._viewer.clear()
+        self._message_label.setText("Render the customised model to view it here.")
+        self._stack.setCurrentWidget(self._message_label)
+
+    def mark_parameters_changed(self) -> None:
+        """Inform the widget that parameters changed and preview is stale."""
+
+        if self._preview_mesh is not None:
+            self._message_label.setText("Parameters changed. Render again to update the model.")
+        else:
+            self._message_label.setText("Render the customised model to view it here.")
+        self._preview_mesh = None
+        self._preview_parameters = None
+        self._stack.setCurrentWidget(self._message_label)
+
+    def show_message(self, message: str) -> None:
+        """Display *message* instead of a mesh preview."""
+
+        self._message_label.setText(message)
+        self._stack.setCurrentWidget(self._message_label)
+
+    def set_preview(self, mesh: _MeshData, mesh_path: Path, parameters: Mapping[str, Any]) -> None:
+        """Show the rendered *mesh* and persist the applied *parameters*."""
+
+        self._preview_mesh = mesh
+        self._preview_parameters = dict(parameters)
+        self._viewer.set_mesh_data(mesh, mesh_path)
+        self._stack.setCurrentWidget(self._viewer)
+
+    def has_preview(self) -> bool:
+        """Return ``True`` when a mesh preview is active."""
+
+        return self._preview_mesh is not None
+
+    def preview_parameters(self) -> dict[str, Any] | None:
+        """Return the parameter values that produced the current preview."""
+
+        if self._preview_parameters is None:
+            return None
+        return dict(self._preview_parameters)
 
 
 def _is_integer_descriptor(descriptor: ParameterDescriptor) -> bool:
@@ -391,6 +470,7 @@ class CustomizerPanel(QWidget):
     customizationStarted = Signal()
     customizationSucceeded = Signal(object)
     customizationFailed = Signal(str)
+    previewUpdated = Signal()
 
     def __init__(
         self,
@@ -402,8 +482,7 @@ class CustomizerPanel(QWidget):
         self._asset_service = asset_service
         self._session: _SessionContext | None = None
         self._editors: dict[str, ParameterWidget] = {}
-        self._preview_mesh: _MeshData | None = None
-        self._preview_parameters: dict[str, Any] | None = None
+        self._preview_widget: CustomizerPreviewWidget | None = None
 
         self._intro_label = QLabel("Adjust the parameters below to customise this design.", self)
         self._intro_label.setWordWrap(True)
@@ -420,37 +499,13 @@ class CustomizerPanel(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setWidget(self._form_container)
 
-        self._preview_container = QWidget(self)
-        preview_layout = QVBoxLayout(self._preview_container)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.setSpacing(6)
-        self._preview_title = QLabel("Render preview", self._preview_container)
-        self._preview_title.setObjectName("customizerPreviewTitle")
-        preview_layout.addWidget(self._preview_title)
-
-        self._preview_stack_widget = QWidget(self._preview_container)
-        self._preview_stack = QStackedLayout(self._preview_stack_widget)
-        self._preview_message = QLabel(
-            "Render a preview to see the customised model.",
-            self._preview_stack_widget,
-        )
-        self._preview_message.setAlignment(Qt.AlignCenter)
-        self._preview_message.setWordWrap(True)
-        self._preview_stack.addWidget(self._preview_message)
-
-        self._preview_viewer = ModelViewer(self._preview_stack_widget)
-        self._preview_viewer.setMinimumHeight(200)
-        self._preview_stack.addWidget(self._preview_viewer)
-
-        preview_layout.addWidget(self._preview_stack_widget, 1)
-
         self._status_label = QLabel("", self)
         self._status_label.setObjectName("customizerStatus")
         self._status_label.setWordWrap(True)
 
         self._reset_button = QPushButton("Reset", self)
         self._reset_button.clicked.connect(self.reset_parameters)
-        self._preview_button = QPushButton("Render Preview", self)
+        self._preview_button = QPushButton("Render", self)
         self._preview_button.clicked.connect(self._handle_preview)
         self._save_button = QPushButton("Save Model", self)
         self._save_button.clicked.connect(self._handle_generate)
@@ -468,7 +523,6 @@ class CustomizerPanel(QWidget):
         layout.setSpacing(10)
         layout.addWidget(self._intro_label)
         layout.addWidget(self._scroll, 1)
-        layout.addWidget(self._preview_container, 1)
         layout.addWidget(self._status_label)
         layout.addLayout(button_row)
 
@@ -485,10 +539,20 @@ class CustomizerPanel(QWidget):
         self._editors.clear()
         self._session = None
         self._status_label.clear()
-        self._preview_mesh = None
-        self._preview_parameters = None
-        self._preview_message.setText("Render a preview to see the customised model.")
-        self._preview_stack.setCurrentWidget(self._preview_message)
+        if self._preview_widget is not None:
+            self._preview_widget.clear()
+        self._update_action_states()
+
+    def set_preview_widget(self, widget: CustomizerPreviewWidget | None) -> None:
+        """Attach *widget* so previews can be rendered outside the panel."""
+
+        if self._preview_widget is widget:
+            return
+        if self._preview_widget is not None:
+            self._preview_widget.clear()
+        self._preview_widget = widget
+        if self._preview_widget is not None:
+            self._preview_widget.clear()
         self._update_action_states()
 
     def set_session(
@@ -558,7 +622,7 @@ class CustomizerPanel(QWidget):
     def _update_action_states(self) -> None:
         logger.info("CustomizerPanel._update_action_states()")
         has_parameters = bool(self._editors)
-        preview_available = self._session is not None and has_parameters
+        preview_available = self._session is not None and has_parameters and self._preview_widget is not None
         self._reset_button.setEnabled(has_parameters)
         self._preview_button.setEnabled(preview_available)
         self._save_button.setEnabled(self._can_save())
@@ -612,21 +676,21 @@ class CustomizerPanel(QWidget):
         self._update_action_states()
 
     def _invalidate_preview(self) -> None:
-        if self._preview_mesh is not None:
-            self._preview_message.setText("Parameters changed. Render a preview to update the model.")
-            self._preview_stack.setCurrentWidget(self._preview_message)
-        else:
-            self._preview_message.setText("Render a preview to see the customised model.")
-        self._preview_mesh = None
-        self._preview_parameters = None
+        if self._preview_widget is not None:
+            self._preview_widget.mark_parameters_changed()
 
     def _handle_preview(self) -> None:
-        if self._session is None:
+        context = self._session
+        if context is None:
             self._status_label.setText("Customizer session is not initialised.")
             return
+        if self._preview_widget is None:
+            self._status_label.setText("Preview is unavailable in this context.")
+            return
 
-        backend = self._session.backend
-        schema = self._session.schema
+        backend = context.backend
+        schema = context.schema
+        source_path = context.source_path
         try:
             normalized = backend.validate(schema, self.parameter_values())
         except Exception as exc:  # noqa: BLE001
@@ -634,14 +698,14 @@ class CustomizerPanel(QWidget):
             self._status_label.setText(message)
             return
 
-        self._status_label.setText("Rendering preview…")
+        self._status_label.setText("Rendering model…")
         self._preview_button.setEnabled(False)
         self._save_button.setEnabled(False)
         try:
             with tempfile.TemporaryDirectory(prefix="three_dfs_preview_") as tmp:
                 work_dir = Path(tmp)
                 session = backend.plan_build(
-                    self._session.source_path,
+                    source_path,
                     schema,
                     normalized,
                     output_dir=work_dir,
@@ -654,21 +718,17 @@ class CustomizerPanel(QWidget):
                 mesh, error = load_mesh_data(mesh_path)
                 if mesh is None:
                     raise RuntimeError(error or "Preview mesh could not be loaded.")
-                self._preview_mesh = mesh
-                self._preview_parameters = dict(normalized)
-                self._preview_viewer.set_mesh_data(mesh, mesh_path)
-                self._preview_stack.setCurrentWidget(self._preview_viewer)
+                self._preview_widget.set_preview(mesh, mesh_path, normalized)
+                self.previewUpdated.emit()
                 self._status_label.setText("Preview updated with current parameters.")
         except FileNotFoundError as exc:
             message = str(exc) or ("OpenSCAD executable not found. Ensure it is installed and on PATH.")
-            self._preview_message.setText(message)
-            self._preview_stack.setCurrentWidget(self._preview_message)
+            self._preview_widget.show_message(message)
             self._status_label.setText(message)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to render customizer preview")
             message = str(exc) or "Preview failed."
-            self._preview_message.setText(message)
-            self._preview_stack.setCurrentWidget(self._preview_message)
+            self._preview_widget.show_message(message)
             self._status_label.setText(message)
         finally:
             self._update_action_states()
@@ -929,7 +989,6 @@ class CustomizerPanel(QWidget):
             else:
                 message = f"Saved '{container_name}'."
             self._status_label.setText(message)
-            self._preview_parameters = dict(normalized)
             self.customizationSucceeded.emit(result)
         finally:
             self._update_action_states()

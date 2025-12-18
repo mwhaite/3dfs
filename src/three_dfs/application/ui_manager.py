@@ -587,7 +587,12 @@ class UIManager:
         metadata.setdefault("generated_at", result.generated_at.isoformat())
         updated = self._main_window._asset_service.update_asset(asset.id, metadata=metadata)
         logger.info("Customization generated, triggering library refresh")
-        self._main_window._library_manager.rescan_library()
+
+        # Refresh the container for the new customized asset if we know which container it belongs to
+        if result.container_path:
+            self._main_window._container_manager.create_or_update_container(result.container_path)
+
+        # Then populate the repository to ensure the new container appears in the library browser
         self._main_window._library_manager.populate_repository()
         self._main_window._container_manager.refresh_current_container()
         self._main_window._preview_pane.set_item(

@@ -105,7 +105,7 @@ class OpenSCADBackend(CustomizerBackend):
         )
         customized_source_path = output_dir / f"{source.stem}_customized.scad"
         try:
-            updated_source = self._render_customized_source(source, normalized)
+            updated_source = self._render_customized_source(source, schema, normalized)
             customized_source_path.write_text(updated_source, encoding="utf-8")
         except Exception:
             customized_source_path = None
@@ -122,8 +122,16 @@ class OpenSCADBackend(CustomizerBackend):
             )
 
         command: list[str] = [self.executable, "-o", str(output_path)]
+        descriptor_map = {descriptor.name: descriptor for descriptor in schema.parameters}
         for name in sorted(normalized):
-            command.extend(["-D", f"{name}={self._format_override(normalized[name])}"])
+            descriptor = descriptor_map.get(name)
+            value = normalized[name]
+            skip_override = False
+            if descriptor is not None:
+                skip_override = descriptor.raw_expression or self._looks_like_expression(descriptor.default)
+            if skip_override and value == descriptor.default:
+                continue
+            command.extend(["-D", f"{name}={self._format_override(value)}"])
         command.append(str(source))
 
         session_metadata = {"backend": self.name, "executable": self.executable}
@@ -140,7 +148,23 @@ class OpenSCADBackend(CustomizerBackend):
         )
 
         if execute:
-            subprocess.run(command, check=True)
+            try:
+                subprocess.run(
+                    command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                stdout = (exc.stdout or "").strip()
+                stderr = (exc.stderr or "").strip()
+                details = stderr or stdout
+                if details:
+                    snippet = details.splitlines()[-1]
+                    message = f"OpenSCAD render failed: {snippet}"
+                else:
+                    message = f"OpenSCAD render failed with exit code {exc.returncode}."
+                raise RuntimeError(message) from exc
 
         return session
 
@@ -159,23 +183,25 @@ class OpenSCADBackend(CustomizerBackend):
         value_str = match.group("value").strip()
         comment = match.group("comment") or ""
 
-        default = self._parse_value(value_str)
+        default, is_expression = self._parse_value(value_str)
         description, annotation = self._split_comment(comment)
         descriptor_kwargs = self._descriptor_from_annotation(name, default, annotation)
         if descriptor_kwargs is None:
             descriptor_kwargs = self._default_descriptor(name, default)
+            if is_expression:
+                descriptor_kwargs["raw_expression"] = True
         if description and not descriptor_kwargs.get("description"):
             descriptor_kwargs["description"] = description
         return ParameterDescriptor(**descriptor_kwargs)
 
-    def _parse_value(self, raw: str) -> Any:
+    def _parse_value(self, raw: str) -> tuple[Any, bool]:
         text = raw.strip()
         if text.lower() in {"true", "false"}:
-            return text.lower() == "true"
+            return text.lower() == "true", False
         try:
-            return ast.literal_eval(text)
+            return ast.literal_eval(text), False
         except Exception:
-            return text
+            return text, True
 
     def _split_comment(self, comment: str) -> tuple[str | None, str | None]:
         comment = comment.strip()
@@ -308,12 +334,25 @@ class OpenSCADBackend(CustomizerBackend):
             return str(value)
         return json.dumps(value)
 
-    def _render_customized_source(self, source: Path, normalized: Mapping[str, Any]) -> str:
+    def _looks_like_expression(self, value: Any) -> bool:
+        if not isinstance(value, str):
+            return False
+        if not any(char in value for char in "+-*/()?<>:"):
+            return False
+        return any(char.isalpha() for char in value)
+
+    def _render_customized_source(
+        self,
+        source: Path,
+        schema: ParameterSchema,
+        normalized: Mapping[str, Any],
+    ) -> str:
         text = source.read_text(encoding="utf-8")
         lines = text.splitlines()
+        descriptor_map = {descriptor.name: descriptor for descriptor in schema.parameters}
         rendered: list[str] = []
         for line in lines:
-            replacement = self._rewrite_assignment(line, normalized)
+            replacement = self._rewrite_assignment(line, descriptor_map, normalized)
             rendered.append(replacement)
         # Preserve trailing newline if present in original source
         newline = "\n" if text.endswith("\n") else ""
@@ -326,7 +365,12 @@ class OpenSCADBackend(CustomizerBackend):
             return body + newline
         return header + body + newline
 
-    def _rewrite_assignment(self, line: str, overrides: Mapping[str, Any]) -> str:
+    def _rewrite_assignment(
+        self,
+        line: str,
+        descriptors: Mapping[str, ParameterDescriptor],
+        overrides: Mapping[str, Any],
+    ) -> str:
         stripped = line.strip()
         if not stripped:
             return line
@@ -338,10 +382,18 @@ class OpenSCADBackend(CustomizerBackend):
         if name not in overrides:
             return line
 
+        descriptor = descriptors.get(name)
+        value = overrides[name]
+        skip_rewrite = False
+        if descriptor is not None:
+            skip_rewrite = descriptor.raw_expression or self._looks_like_expression(descriptor.default)
+        if skip_rewrite and value == descriptor.default:
+            return line
+
         comment = match.group("comment")
         indent_length = len(line) - len(line.lstrip(" \t"))
         indent = line[:indent_length]
-        formatted = self._format_override(overrides[name])
+        formatted = self._format_override(value)
         updated = f"{indent}{name} = {formatted};"
         if comment:
             updated += f" // {comment}"

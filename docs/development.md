@@ -14,7 +14,27 @@ This guide summarises the day-to-day tooling used by contributors. Refer back to
 | Build wheel/sdist | `hatch build` |
 
 Keep feature branches scoped to a single change set (for example `feature/import-sketchfab`) and prefer imperative commit messages such as “Add plugin registry tests”.
+## Code Quality Automation
 
+The project uses automated checks to maintain code quality:
+
+- **Pre-push hook**: Automatically runs `hatch run lint` before each push to prevent pushing code with linting issues
+- **Pre-commit hooks** (optional): For even stricter control, install [pre-commit](https://pre-commit.com/) and run `pre-commit install` to enable checks on every commit
+- **CI/CD**: GitHub Actions runs linting and tests on all pushes to `main` and pull requests
+
+To set up pre-commit hooks (recommended for active development):
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+This will run linting and formatting checks before each commit. You can also run checks manually:
+
+```bash
+pre-commit run --all-files  # Check all files
+pre-commit run ruff --all-files  # Run only ruff checks
+```
 ## Testing strategy
 
 Tests live under `tests/` and generally mirror the layout of `src/three_dfs/`. Use `pytest` fixtures from `tests/conftest.py` to share setup logic, and place binary fixtures under `tests/fixtures/`. Maintain deterministic behaviour—avoid network calls or machine-specific paths. When a failure is isolated to one module, run a focused subset, e.g.:
@@ -30,6 +50,20 @@ Refer to the [manual testing checklist](manual-testing.md) for smoke tests that 
 - Recreate the environment: `./setup.sh --recreate`.
 - Reset the asset catalogue: `scripts/reset_assets_db.py --dry-run`, then rerun without `--dry-run` (optionally add `--yes`).
 - Missing thumbnails after a purge: launch the application and open the affected container; thumbnails regenerate lazily.
+
+## Container metadata
+
+Each container asset stores a structured `container_metadata` block that powers the README and metadata tab. The schema tracks `due_date`, `printed_status` (`not_started`, `in_progress`, `printed`, `deprecated`), `priority` (`low`/`normal`/`high`/`urgent`), free-form `notes`, `contacts[]` (name/role/email/url/notes), and `external_links[]` (label/url/kind/description). Components keep their existing metadata; only the container root owns this block.
+
+When adding or editing a container, populate the block via `three_dfs.container.apply_container_metadata` or the UI’s **Edit Metadata** button (available in the container pane). Invalid ISO dates, contacts without names, or links without URLs are rejected early. Developers can run:
+
+```bash
+hatch run verify-metadata
+# or directly:
+python scripts/migrate_container_metadata.py --dry-run
+```
+
+Include `--db` to point at a specific SQLite file, and `--verbose` if you need per-container logging. CI runs the same `verify-metadata` command (see `.github/workflows/ci.yml`). When metadata changes, regenerate any README “ABOUT” panes and re-run the verification before pushing.
 
 ## Release automation
 

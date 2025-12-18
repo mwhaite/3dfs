@@ -7,10 +7,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QGroupBox,
     QLabel,
     QLineEdit,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )

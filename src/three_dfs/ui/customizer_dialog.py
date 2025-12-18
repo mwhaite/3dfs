@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QTabWidget, QVBoxLayout
 
 from ..customizer import CustomizerBackend, ParameterSchema
 from ..storage import AssetRecord, AssetService
-from .customizer_panel import CustomizerPanel
+from .customizer_panel import CustomizerPanel, CustomizerPreviewWidget
 
 __all__ = ["CustomizerDialog", "CustomizerSessionConfig"]
 
@@ -50,9 +50,17 @@ class CustomizerDialog(QDialog):
             asset_service=self._asset_service,
             parent=self,
         )
+        self._preview_widget = CustomizerPreviewWidget(self)
+        self._panel.set_preview_widget(self._preview_widget)
         self._panel.customizationStarted.connect(self.customizationStarted)
         self._panel.customizationSucceeded.connect(self._handle_success)
         self._panel.customizationFailed.connect(self.customizationFailed)
+        self._panel.previewUpdated.connect(self._activate_preview_tab)
+
+        self._tabs = QTabWidget(self)
+        self._parameters_tab_index = self._tabs.addTab(self._panel, "Parameters")
+        self._preview_tab_index = self._tabs.addTab(self._preview_widget, "Render")
+        self._tabs.setTabEnabled(self._preview_tab_index, False)
 
         self._button_box = QDialogButtonBox(QDialogButtonBox.Close, self)
         self._button_box.rejected.connect(self.reject)
@@ -60,7 +68,7 @@ class CustomizerDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
-        layout.addWidget(self._panel)
+        layout.addWidget(self._tabs)
         layout.addWidget(self._button_box)
 
         self.setModal(True)
@@ -75,6 +83,8 @@ class CustomizerDialog(QDialog):
         self._config = config
         base_label = config.base_asset.label or Path(config.base_asset.path).name
         self.setWindowTitle(f"Customize {base_label}")
+        self._tabs.setTabEnabled(self._preview_tab_index, True)
+        self._tabs.setCurrentIndex(self._parameters_tab_index)
         self._panel.set_session(
             backend=config.backend,
             schema=config.schema,
@@ -98,3 +108,7 @@ class CustomizerDialog(QDialog):
     # ------------------------------------------------------------------
     def _handle_success(self, result: object) -> None:
         self.customizationSucceeded.emit(result)
+
+    def _activate_preview_tab(self) -> None:
+        self._tabs.setTabEnabled(self._preview_tab_index, True)
+        self._tabs.setCurrentIndex(self._preview_tab_index)
